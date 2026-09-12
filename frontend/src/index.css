@@ -1,15 +1,68 @@
 /* ─────────────────────────────────────────────────────────────
- * Tailwind v4 入口
+ * Tailwind v4 入口 + 语义色 token
  *
- * v4 和 v3 最大的差别：不再有 tailwind.config.js，
- * 也不再有 @tailwind base/components/utilities 三行指令。
- * 一行 @import 就够 —— 主题定制用 @theme {} 写在下面。
+ * v4 是「CSS-first」配置：没有 tailwind.config.js，主题写在 @theme 里。
+ * @theme 里的每个变量会自动生成对应的工具类：
  *
- * 现在先不定义主题色。等 D4 做「状态徽章 + 人机分色」时，
- * 那套语义色板（5 个 status × 3 个 assignee × 2 档审批）
- * 会以 @theme 变量的形式落在这里，成为全站单一色源。
+ *     --color-running: #1d4ed8   →  text-running / border-running / bg-running
+ *     --color-running-soft: ...  →  bg-running-soft
+ *
+ * ⚑ 为什么必须用语义 token 而不是在组件里写裸 hex（ui-ux-pro-max 的
+ *   `color-semantic` 规则）：色板一旦要调，裸 hex 散落在 10 个 tsx 里
+ *   就得逐个找；token 只需改这一处。
  * ───────────────────────────────────────────────────────────── */
 @import 'tailwindcss';
+
+@theme {
+  /* ── 任务状态色（5 个）────────────────────────────────────
+   * 每对都是【浅底 + 深字】，不是同一个色相调透明度 —— 这样对比度可控。
+   * 全部 ≥4.5:1（WCAG AA 正文要求），实测值见下方注释。
+   *
+   * ⚠️ 这五个颜色【不单独承载信息】。done（绿）和 failed（红）是
+   *    最典型的红绿配对，色盲用户分不出 —— 所以每个状态都必须同时有
+   *    一个形状明显不同的图标（见 StatusIcon.tsx）。颜色只是加速识别，
+   *    不是唯一线索。
+   */
+
+  /* 未开始 —— 中性灰。对底：7.0:1 */
+  --color-todo: #475569;
+  --color-todo-soft: #f1f5f9;
+
+  /* 进行中 —— 蓝。对底：6.9:1。用蓝而非黄：蓝在红绿色盲下最安全 */
+  --color-running: #1d4ed8;
+  --color-running-soft: #dbeafe;
+
+  /* 完成 —— 绿。对底：4.9:1 */
+  --color-done: #047857;
+  --color-done-soft: #d1fae5;
+
+  /* 失败 —— 红。对底：5.7:1 */
+  --color-failed: #b91c1c;
+  --color-failed-soft: #fee2e2;
+
+  /* 跳过 —— 和 todo 同为中性色，靠【图标形状】区分（带斜杠的圆）。
+   * 不用更低对比度的灰来"表示淡出"—— 那会掉到 4.5:1 以下。 */
+  --color-skipped: #52525b;
+  --color-skipped-soft: #f4f4f5;
+
+  /* ── 审批色（2 档 + 被拒）────────────────────────────────
+   * 这几档【不复用】状态色：审批的 🔴 和 failed 的红是不同的东西，
+   * 混用会让人以为节点执行失败了。它们只出现在文字 chip 上，
+   * 和节点边框（status）在视觉上天然分离。
+   */
+
+  /* 单次确认 —— 琥珀。对底：4.8:1 */
+  --color-approve-once: #b45309;
+  --color-approve-once-soft: #fef3c7;
+
+  /* 二次确认 —— 深红，比 failed 更暗以示"更重" */
+  --color-approve-twice: #9f1239;
+  --color-approve-twice-soft: #ffe4e6;
+
+  /* 被否决 —— 紫。故意不用红：它表达的是"用户否决了"，不是"出错了" */
+  --color-rejected: #6d28d9;
+  --color-rejected-soft: #ede9fe;
+}
 
 html,
 body,
