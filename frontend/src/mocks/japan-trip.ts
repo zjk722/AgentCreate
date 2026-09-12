@@ -52,13 +52,17 @@ export const japanTrip: OutlineNode[] = [
     },
   }),
 
-  // 这两个是「只能人来」—— 出行日期是个人偏好，签证要求本人到场
+  // 这两个是「只能人来」—— 出行日期是个人偏好，签证要求本人到场。
+  // ⚑ 注意 reason 是【枚举】不是一句话：界面上那句"需本人办理"
+  //   由前端从枚举翻译（lib/reasons.ts），不由后端生成。
   node('b20000000013', 'b20000000001', 2, '决定出行日期', {
     assignee: 'user',
+    assignee_reason: 'needs_human',
     status: 'todo',
   }),
   node('b20000000014', 'b20000000001', 3, '办理签证', {
     assignee: 'user',
+    assignee_reason: 'needs_human',
     status: 'todo',
   }),
 
@@ -79,9 +83,12 @@ export const japanTrip: OutlineNode[] = [
     depends_on: ['b20000000013'],
   }),
 
-  // 🔴 blocked：谁的做不了 —— 无可用工具。§1.2 里那条
+  // 🔴 blocked：谁都做不了 —— 无可用工具。§1.2 里那条。
+  // detail 只放【工具名】这种机器可读的短内容，不写句子。
   node('b20000000023', 'b20000000002', 2, '预订米其林餐厅', {
     assignee: 'blocked',
+    assignee_reason: 'no_tool',
+    assignee_detail: 'restaurant_booking',
     status: 'todo',
   }),
 
@@ -90,6 +97,7 @@ export const japanTrip: OutlineNode[] = [
   // 视图会算成 'rejected' —— D4 应该显示成"被你否决，现在归你"。
   node('b20000000024', 'b20000000002', 3, '兑换日元', {
     assignee: 'user',
+    assignee_reason: 'user_rejected',
     status: 'todo',
     locked: true,
     approval: { level: 'confirm', status: 'rejected' },

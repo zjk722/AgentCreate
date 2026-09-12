@@ -24,6 +24,29 @@ export type NodeId = string
 /** 这活归谁做（§4.2）。注意：`blocked` 是 assignee，不是 status。 */
 export type Assignee = 'agent' | 'user' | 'blocked'
 
+/**
+ * 为什么这么分 —— **枚举，不是自由文本**（§4.2）。
+ *
+ * ⚑ 每个取值都对应文档里一条【明确的规则】，所以界面上显示的每一句原因
+ *   都能追到出处。若改成 `reason: string` 让模型自由写，它会产出
+ *   「因为签证政策复杂」这种听着合理但无出处的句子 ——
+ *   与「不存原始思维链」是同一条理由：自我报告不可验证。
+ *
+ * 界面上那句自然的说明（如「需本人办理」）由前端据枚举【翻译】，
+ * 不由后端生成 —— 措辞可改而不动数据。
+ */
+export type AssigneeReason =
+  /** user：只能人来（需本人办理 / 个人偏好）—— §1.2 的签证、出行日期 */
+  | 'needs_human'
+  /** blocked：工具清单里没有能做的工具 —— §9.2「无工具」 */
+  | 'no_tool'
+  /** user：Agent 尝试过但失败，转人工 —— §5.2 失败降级表 */
+  | 'agent_failed'
+  /** user：用户否决了 Agent 的方案 —— §5.2 的 rejected 转移 */
+  | 'user_rejected'
+  /** blocked：Policy 按规则拒绝 —— §9.2「Policy 拒绝」 */
+  | 'policy_denied'
+
 /** 任务生命周期（§4.2 / §5.2）。归谁是 assignee，别混。 */
 export type NodeStatus = 'todo' | 'running' | 'done' | 'failed' | 'skipped'
 
@@ -91,6 +114,20 @@ export interface OutlineNode {
   result_summary?: string | null
 
   assignee: Assignee
+  /**
+   * 为什么这么分。`assignee === 'agent'` 时为 null（归 Agent 无需解释）。
+   * 枚举见 `AssigneeReason` 的说明。
+   */
+  assignee_reason?: AssigneeReason | null
+  /**
+   * 原因的短细节：缺的工具名、触发的规则名。
+   *
+   * ⚠️ 只放**短且机器可读优先**的内容（如 `restaurant_booking`）。
+   *    **不要**在这里写叙述性句子 —— 一旦开口子，它就会退化成
+   *    和自由文本一样不可验证的东西。
+   */
+  assignee_detail?: string | null
+
   status: NodeStatus
 
   /** 依赖的节点 id（DAG）。与 parent_id 是两回事：一个是执行顺序，一个是层级归属。 */

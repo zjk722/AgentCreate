@@ -5,11 +5,18 @@
 > **定位** 自然语言目标 → 可执行任务图 → 自主执行 → 人机边界标注
 > **关键词** 规划执行 · 人机边界 · 证据链 · 评测驱动 · MCP 双向
 
-> **v0.4 变更**（1 处）：
-> §4.2 补 `result_summary` 字段 —— §3.4 的 `/v1/execute_task` 一直在返回它，
+> **v0.4 变更**（§4.2 补两个字段 + 一条设计判断）：
+>
+> ① 补 `result_summary` —— §3.4 的 `/v1/execute_task` 一直在返回它，
 > 但 outline 里没有字段接，引擎产出了结果却无处可存。顺带记录两个并行缺口：
 > 失败原因（`execution_tasks.error`）同样没进 outline；以及为什么**不**存原始
 > 思维链（自我报告不可信、提示注入面、成本）。
+>
+> ② 补 `assignee_reason` + `assignee_detail` —— §1.2 明写着原因
+> （`[user · 需本人办理]`、`[blocked · 无可用工具]`），但 outline 里没有字段承接，
+> 界面上要显示的这句话在存储层无处可放。
+> **关键决策：用枚举而非 `reason: string`** —— 每个取值对应文档里一条明确规则，
+> 界面上每句解释都能追到出处；自由文本则是不可验证的自我报告。
 
 > **v0.3 变更**（前端 demo 设计评审的产出，共 9 处）：
 > §4.2 加 `approval` 字段与三轴正交说明、明确 `order` 连续约束、澄清 `level` 不进存储；
@@ -340,6 +347,8 @@ map_edit_proposals (
     "title": "预订大阪酒店",
 
     "assignee": "agent",          // ⚑ agent | user | blocked
+    "assignee_reason": null,      // ⚑ 为什么这么分【枚举】，见下
+    "assignee_detail": null,      // ⚑ 短细节：缺的工具名 / 触发的规则名
     "status": "done",             // ⚑ todo|running|done|failed|skipped
     "depends_on": ["7d2e8b45a901"],
     "locked": true,               // ⚑ 人工改过 → AI 不许碰
@@ -374,6 +383,33 @@ map_edit_proposals (
 | `evidence` | 执行证据（见 §5.2） |
 | `source_span` | 溯源到原文的字符区间（防幻觉） |
 | `approval` | 审批状态；由 Java 从 `approvals` 表 join 拍平 |
+
+#### ⚑ `assignee_reason`：用【枚举】而不是自由文本
+
+§1.2 的示例里明写着原因（`办理签证 [user · 需本人办理]`、`预订米其林餐厅 [blocked · 无可用工具]`），
+但此前 `outline` 里**没有字段承接它** —— 界面上要显示的这句话，存储层无处可放。
+
+**关键决策：这是枚举，不是 `reason: string`。** 理由与「不存原始思维链」是同一条：
+
+> **自由文本是模型的自我报告，不可验证；枚举是规则产出，可验证。**
+
+每个取值都对应文档里一条**明确的规则**，因此界面上显示的每一句原因都能追到出处：
+
+| `assignee_reason` | `assignee` | 含义 | 规则出处 |
+|---|---|---|---|
+| `needs_human` | `user` | 只能人来（需本人办理 / 个人偏好） | §1.2 的签证、出行日期 |
+| `no_tool` | `blocked` | 工具清单里没有能做的工具 | §9.2「无工具」 |
+| `agent_failed` | `user` | Agent 尝试过但失败，转人工 | §5.2 失败降级表 |
+| `user_rejected` | `user` | 用户否决了 Agent 的方案 | §5.2 的 rejected 转移 |
+| `policy_denied` | `blocked` | Policy 按规则拒绝 | §9.2「Policy 拒绝」 |
+| `null` | `agent` | 归 Agent，无需解释 | —— |
+
+**`assignee_detail`** 只放**短且机器可读优先**的内容（缺的工具名、触发的规则名），
+例如 `no_tool` 时填 `restaurant_booking`。**不要**在这里写叙述性句子 ——
+一旦开了口子，它就会退化成和自由文本一样不可验证的东西。
+
+> 界面上那句自然的说明（如「需本人办理」）由前端**根据枚举翻译**，不由后端生成。
+> 这样措辞可以改而不动数据，且永远不会出现"听着合理但无出处"的句子。
 
 #### ⚑ `result_summary`：摘要进节点，全文进审计
 
