@@ -1,9 +1,16 @@
 # Agent 任务图引擎 · 项目开发文档
 
-> **版本** v0.2
-> **日期** 2026-09-10
+> **版本** v0.3
+> **日期** 2026-09-12
 > **定位** 自然语言目标 → 可执行任务图 → 自主执行 → 人机边界标注
 > **关键词** 规划执行 · 人机边界 · 证据链 · 评测驱动 · MCP 双向
+
+> **v0.3 变更**（前端 demo 设计评审的产出，共 9 处）：
+> §4.2 加 `approval` 字段与三轴正交说明、明确 `order` 连续约束、澄清 `level` 不进存储；
+> §5.2 重写状态机（修正 `blocked` 归属、拆分入库前/后状态、补 `rejected` 转移）；
+> §5.3 补拖拽两手势与并发 `409` 不合并；
+> §7.2 校验按"生成期/读取期/依赖图"三组重排，拆 `E_CYCLE` 并补 4 个新 code；
+> §11 澄清 `lib/outline.ts` 与 Python `outline.py` 非同一算法
 
 ---
 
@@ -322,8 +329,8 @@ map_edit_proposals (
 [
   {
     "id": "a3f9c1e02b47",
-    "parent_id": null,
-    "order": 0,
+    "parent_id": null,            // ⚑ 层级由它表达；null = 根
+    "order": 0,                   // ⚑ 同级内下标，必须连续 0..k-1
     "title": "预订大阪酒店",
 
     "assignee": "agent",          // ⚑ agent | user | blocked
@@ -331,7 +338,12 @@ map_edit_proposals (
     "depends_on": ["7d2e8b45a901"],
     "locked": true,               // ⚑ 人工改过 → AI 不许碰
     "evidence": {...},
-    "source_span": [[12, 48]]     // ⚑ RAG 溯源：对应原文的字符区间
+    "source_span": [[12, 48]],    // ⚑ RAG 溯源：对应原文的字符区间
+
+    "approval": {                 // ⚑ 审批（A6 由 Java join approvals 表拍平）
+      "level": "confirm",         //   confirm | double_confirm
+      "status": "pending"         //   pending | approved | rejected
+    }
   }
 ]
 ```
@@ -339,12 +351,37 @@ map_edit_proposals (
 | 字段 | 说明 |
 |---|---|
 | `id` | **12 位 hex**，跨轮对话的唯一句柄 |
-| `assignee` | `agent` / `user` / `blocked` |
-| `status` | 任务状态机（见 §5.2） |
+| `parent_id` | 父节点 id；`null` 即根。**层级由它表达** |
+| `order` | 同级内的下标，**必须连续 `0..k-1`** |
+| `assignee` | `agent` / `user` / `blocked` ── **归谁做** |
+| `status` | 任务生命周期（见 §5.2）── **走到哪一步** |
 | `depends_on` | 依赖的节点 id 列表（DAG） |
 | `locked` | 人工改过 → AI 不覆盖 |
 | `evidence` | 执行证据（见 §5.2） |
 | `source_span` | 溯源到原文的字符区间（防幻觉） |
+| `approval` | 审批状态；由 Java 从 `approvals` 表 join 拍平 |
+
+#### ⚑ 三个正交的轴（不要合并它们）
+
+节点上有三条**互不替代**的信息。把它们压进一个字段，会让所有读 `status` 的地方都被迫理解审批语义：
+
+| 轴 | 回答 | 取值 |
+|---|---|---|
+| `assignee` | 这活**归谁** | `agent` / `user` / `blocked` |
+| `status` | 这活**到哪一步** | `todo` / `running` / `done` / `failed` / `skipped` |
+| `approval` | 这活**批没批** | `level` × `status` |
+
+**为什么审批不复用 `status`**：§9.2 的两档审批（单次 / 二次）需要区分，且 §4.1 的 `approvals` 表里有 `level` / `requested_at` / `decided_at` / 拒绝原因 —— 一个 `status` 值装不下。**视图需要**（画 🟡）不等于**存储需要**：前端可以自己算出一个展示态，不必把视图需求倒逼进存储模型。
+
+#### ⚑ `order` 的约束与移动语义
+
+- **同一父节点下，`order` 必须恰好是 `0..k-1`**（连续、不重复）。`order` 是**派生值**，不是创作值 —— 每次结构性改动都要重编号整个兄弟组。
+- 校验因此只有一条：排序后的 `order` 序列必须等于 `[0,1,...,k-1]`。**一行断言同时抓重复和空洞。**
+- 跨父移动 = 从旧父的孩子组摘掉（重编号）**+** 插入新父的孩子组（重编号）——**两组都要重编号**，只改一组会留下空洞。
+
+#### ⚑ `level` 不进存储
+
+`level` 只是 LLM 的**输出格式**，程序栈组装成 `parent_id` 后就丢弃（见 §11 `outline.py`）。前端需要深度时自己遍历算。§7.2 的 `E_LEVEL_SKIP` 也是在组装**之前**对模型原始输出做的检查。
 
 **为什么扁平优于嵌套**：
 
@@ -413,15 +450,40 @@ map_edit_proposals (
 
 #### 任务状态机
 
+> ⚑ **`status` 只表达生命周期。** 归谁是 `assignee`、批没批是 `approval` —— 三者正交（见 §4.2）。
+
+**① 入库前（Host 内存态，不持久化，UI 看不到）**
+
 ```
-                    ┌──────────────────────────────┐
-                    ↓                              │
-planned ──裁决──▶ assigned ──确认──▶ pending ──▶ running ──▶ done
-                    │                   │            │
-                    │                   │            ├──▶ failed ──▶ (重试 / 转 user)
-                    │                   │            └──▶ needs_input ──▶ user
-                    └──▶ blocked        └──▶ skipped
+planned ──裁决──▶ assigned ──确认──▶ pending
 ```
+
+**② 持久化后的 `status`（§4.2 的 5 个值）**
+
+```
+todo ──▶ running ──▶ done          （agent 任务）
+todo ──────────────▶ done          （user 任务：人自己做完标记）
+
+running ──▶ failed                 ──▶ (重试 / 转 assignee=user)
+todo    ──▶ skipped                （依赖失败级联）
+```
+
+**③ 审批分支（走 `approval.status`，不占用 `status` 的值）**
+
+```
+approval.status = pending ──批准──▶ approved   → 任务继续走 todo → running
+                          └─拒绝──▶ rejected   → assignee=user, status=todo
+```
+
+**三个容易搞错的地方**：
+
+| 常见误解 | 真相 |
+|---|---|
+| `planned`/`assigned`/`pending` 是 UI 状态 | ❌ 它们是**入库前**的内存态。UI 一律看到 `todo` |
+| `blocked` 是一种 `status` | ❌ 它是 **`assignee`** 的取值（依 §4.2 与 §1.2 的图示） |
+| `needs_input` 是一种 `status` | ❌ 它是**引擎→Host 的信号**（§3.4 响应）。Host 收到后翻译成 `assignee=user` + `status=todo` |
+
+> **拒绝后为什么转 `user` 而不是 `blocked`**：用户拒绝意味着"我不让你做，我自己来"，与 §5.2 失败降级表里「参数错误 → 转 `assignee=user`」同构。而 `blocked` 表达的是"谁都做不了"。
 
 #### 执行时序
 
@@ -518,6 +580,34 @@ Java 调度器                           Python 引擎
 
 > ⚑ **执行中改图**：`status=executing` 时禁止结构性编辑，只允许改标题等无副作用字段。
 
+#### 拖拽的两个手势（FR-6 的"调层级"靠前者）
+
+| 手势 | 改什么字段 | 效果 | FR-6 对应 |
+|---|---|---|---|
+| 拖 X 放到 Y **身上** | X 的 **`parent_id`** = Y | X 成为 Y 的**孩子** | **调层级** |
+| 拖 X 放到 Y 之后的**缝隙** | X 的 **`order`** + 同组重编号 | X 成为 Y 的**兄弟** | 调顺序 |
+
+**两个手势改的是不同的轴，缺一不可** —— `parent_id` 表达层级，`order` 表达同级位置（见 §4.2）。只实现"接在之后"，"调层级"就没法做。
+
+⚠️ 跨父移动 = **两组都要重编号**：旧父的孩子组摘掉一个、新父的孩子组插入一个。只改一组会留下 `order` 空洞（触发 `W_ORDER_INVALID`）。
+
+#### 并发冲突一律 `409`，不做合并
+
+```
+A 打开图 (revision=7)               B 打开图 (revision=7)
+  ↓ 拖拽，提交带 revision=7
+  服务端：匹配 → 写入，revision 变 8
+                                    ↓ 拖拽，提交带 revision=7
+                                    服务端：不匹配 → 409 拒绝
+                                    B 前端：提示「图已被修改」→ 重新加载 → B 重做
+```
+
+> ⚑ **为什么不用"按先后顺序合并"代替 409**：合并是在**猜用户意图**，而且 B 的编辑基于的是**过期快照**（它看到的邻居可能已被 A 改掉），合并结果可能两个人都没想要 —— 这就是 §14.2 反模式 #7 的"并发静默丢失"。
+>
+> **原则：遇到冲突，让人决定，不要替人猜。** 409 的代价只是用户多点一下，但结果永远正确。
+
+**所以"顺序"不是跨请求编排的问题** —— 它在单次请求内部就解决完了：客户端负责把受影响的两组 `order` 重编号好再提交，服务端只校验 `W_ORDER_INVALID`。
+
 ### 5.4 事件推送（SSE）
 
 ```
@@ -612,17 +702,39 @@ Java worker ──publish──▶ Redis
 
 ### 7.2 生成校验
 
+> ⚑ **按"检查时机 + 数据表示"分三组。** 这三组的输入格式不同，实现位置也不同 —— 混在一起写会重复劳动。
+
+**① 生成期**（对模型的**原始输出**，此时是 `level` 表示，见 §11 `outline.py`）
+
 | code | 检查 | 严重度 |
 |---|---|---|
 | `E_MULTIPLE_ROOTS` | 根节点数 ≠ 1 | 🔴 |
 | `E_LEVEL_SKIP` | 层级跳跃 | 🔴 |
 | `E_EMPTY_TITLE` | 空标题 | 🔴 |
 | `E_TITLE_TOO_LONG` | 标题 > 12 字 | 🔴 |
-| `E_CYCLE` | `depends_on` 成环 | 🔴 |
-| `E_DANGLING_DEP` | 依赖了不存在的节点 | 🔴 |
 | `W_DEPTH_EXCEEDED` | 深度超限 | 🟡 |
 | `W_FANOUT_EXCEEDED` | 扇出超限 | 🟡 |
 | `W_DUPLICATE_SIBLING` | 兄弟节点重复 | 🟡 |
+
+**② 读取期**（对**已存 `outline`**，此时是 `parent_id`/`order` 表示 —— 前端与 Java 都要跑）
+
+| code | 检查 | 严重度 | 为什么需要 |
+|---|---|---|---|
+| `E_CYCLE_PARENT` | `parent_id` 成环 | 🔴 | 生成器不会产生，但 §5.3 的**人工拖拽会** |
+| `E_ORPHAN_PARENT` | `parent_id` 指向不存在的节点 | 🔴 | 拖拽半途失败 / 操作列表没落全 |
+| `E_DUPLICATE_ID` | `id` 重复 | 🔴 | `Map` 建索引会**静默覆盖**，不报错只少节点 |
+| `W_ORDER_INVALID` | 兄弟 `order` 序列 ≠ `[0..k-1]` | 🟡 | 一行断言同时抓重复与空洞（§4.2） |
+
+**③ 依赖图**（`depends_on`）
+
+| code | 检查 | 严重度 |
+|---|---|---|
+| `E_CYCLE_DEP` | `depends_on` 成环 | 🔴 |
+| `E_DANGLING_DEP` | 依赖了不存在的节点 | 🔴 |
+
+> ⚠️ 原文档的 `E_CYCLE` 只覆盖了 `depends_on`，但 `parent_id` 成环是**另一回事**（一个是层级树成环，一个是依赖图成环），必须拆成两个 code —— 它们的检测算法也不同：`parent_id` 是单指针可以"往上走"（O(n²) 足够），`depends_on` 是任意图需要拓扑排序。
+
+> ⚑ **坏数据的处置原则：宁可显式显示异常，也不要静默丢弃。** 孤儿节点要渲染成带错误角标的游离节点，不能 `filter` 掉 —— 静默丢弃会让用户看到**内容凭空消失且无从追溯**。
 
 ### 7.3 执行校验 ⭐
 
@@ -863,8 +975,19 @@ mindmap_agent/
         │   ├── editor/           ← 拖拽编辑 + per-node 串行保存队列
         │   └── chat/             ← 自然语言调整 + 提案确认
         ├── hooks/useEventStream.ts
-        └── lib/sse.ts            ← 手写 SSE 解析（携带 auth 头）
+        └── lib/
+            ├── sse.ts            ← 手写 SSE 解析（携带 auth 头）
+            └── outline.ts        ← ⚑ parent_id/order → 树（纯函数，可单测）
 ```
+
+> ⚠️ **`lib/outline.ts` 与 Python 的 `outline.py` 不是同一个算法**，别当成重复实现去合并：
+>
+> | | 输入 | 算法 |
+> |---|---|---|
+> | Python `planner/outline.py` | `level`（模型原文） | **栈组装** level → 树 |
+> | 前端 `lib/outline.ts` | `parent_id`/`order`（已存数据） | **挂载** 指针 → 树 |
+>
+> 前端拿到的已经是 `parent_id` 表示，**不需要栈组装**。两者方向也不同：一个在**写**的时候组装，一个在**读**的时候重建。
 
 **迁移权威**：只有一处执行 migration。**Java 侧 Flyway**（Java 是唯一持久化方），Python 侧不碰库。
 
