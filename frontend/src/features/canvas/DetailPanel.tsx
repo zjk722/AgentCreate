@@ -1,28 +1,35 @@
 /**
- * 选中节点的详情面板 —— 本 demo 的"证据链"落地处。
+ * 选中节点的详情面板 —— 证据链落地处 + 单节点操作入口。
  *
- * ⚑ 这个面板存在的原因，是 §1.3 的卖点 #3：
- *   **每个 `done` 必须挂可验证的执行证据，杜绝"自我报告式完成"。**
+ * ⚑ 证据链为什么重要（§1.3 卖点 #3）：
+ *   这里不是"显示一下模型说了什么"，而是显示【模型凭什么说做完了】：
+ *   哪个工具、什么参数、耗时多久、原始调用记录在哪（result_ref 可回溯审计日志）。
  *
- *   所以这里不是"显示一下模型说了什么"，而是显示【模型凭什么说做完了】：
- *   哪个工具、什么参数、耗时多久、原始调用记录在哪（result_ref 可回溯到审计日志）。
- *
- *   没有 evidence 的 done 在界面上是"可疑"的 —— §7.3 的
- *   `E_MISSING_EVIDENCE` 规定它该被降级为 failed。
+ * ⚑ 操作入口为什么放在这里：用户在图上看到的异常（紫色的被否决、
+ *   灰色的待办），点一下就能就地处理 —— 不必回到对话框里找那一条。
  */
-import type { OutlineNode } from '../../types/outline'
 import { displayState } from '../../lib/outline'
+import type { NodeAction } from '../../lib/simulation'
+import type { OutlineNode } from '../../types/outline'
 import { ASSIGNEE_LABEL, STATUS_LABEL, approvalChip } from './styles'
 
 export function DetailPanel({
   node,
   onClose,
+  onAction,
 }: {
   node: OutlineNode
   onClose: () => void
+  onAction: (nodeId: string, action: NodeAction) => void
 }) {
   const state = displayState(node)
   const chip = approvalChip(node.approval)
+
+  // 哪些操作对【这一个】节点可用。
+  // ⚠️ 手动完成只开放给 user / blocked —— Agent 该做的任务不能被人顶掉，
+  //   否则"Agent 有没有真做完"这个最关键的信息就被污染了。
+  const canComplete = node.status !== 'done' && node.assignee !== 'agent'
+  const canDecide = node.approval?.status === 'pending'
 
   return (
     <aside className="absolute top-4 right-4 z-10 w-80 rounded-lg border border-slate-200 bg-white/95 shadow-lg backdrop-blur">
@@ -42,6 +49,39 @@ export function DetailPanel({
           </svg>
         </button>
       </header>
+
+      {/* ── 可执行的操作 ─────────────────────────────────── */}
+      {(canDecide || canComplete) && (
+        <div className="flex flex-wrap gap-1.5 border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+          {canDecide && (
+            <>
+              <button
+                type="button"
+                onClick={() => onAction(node.id, 'approve')}
+                className="cursor-pointer rounded bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-slate-700"
+              >
+                批准
+              </button>
+              <button
+                type="button"
+                onClick={() => onAction(node.id, 'reject')}
+                className="cursor-pointer rounded border border-rejected/30 bg-white px-2.5 py-1 text-[11px] font-medium text-rejected transition-colors hover:bg-rejected-soft"
+              >
+                否决
+              </button>
+            </>
+          )}
+          {canComplete && (
+            <button
+              type="button"
+              onClick={() => onAction(node.id, 'complete')}
+              className="cursor-pointer rounded border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-50"
+            >
+              标记已完成
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── 产出 ──────────────────────────────────────────
        * ⚑ 放在最前面：用户点开一个节点，最想知道的是「它查到了什么」，
@@ -73,6 +113,8 @@ export function DetailPanel({
           )}
         </Row>
         <Row label="归属">{ASSIGNEE_LABEL[node.assignee]}</Row>
+
+        {node.assignee_reason && <Row label="原因">{node.assignee_reason}</Row>}
 
         {chip && <Row label="审批">{chip.label}</Row>}
 
@@ -110,14 +152,19 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 /** 证据区块 —— 这是整个面板的重点。 */
 function EvidenceBlock({ node }: { node: OutlineNode }) {
   if (!node.evidence) {
-    // ⚑ 一个 done 却没有证据，是【必须显式暴露】的异常（§7.3 E_MISSING_EVIDENCE）
-    if (node.status === 'done') {
+    // ⚑ 一个 done 却没有证据，是必须显式暴露的异常（§7.3 E_MISSING_EVIDENCE）。
+    //
+    //    ⚠️ 但只对【Agent 完成】的任务报警。这条规则的存在理由是
+    //    「不信任模型的自我报告」（§5.2 证据链规则）—— 人勾的完成
+    //    由人负责，不需要工具调用记录背书。不加这个限定，
+    //    用户自己办完的事会被误报成"缺少证据链"。
+    if (node.status === 'done' && node.assignee === 'agent') {
       return (
         <div className="border-t border-slate-100 px-4 py-3">
           <p className="rounded border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] leading-relaxed text-red-700">
             <span className="font-semibold">缺少证据链。</span>
             <br />
-            这个节点标记为「已完成」却没有工具调用记录。按 §7.3 的
+            这个节点是 Agent 标记的「已完成」，却没有工具调用记录。按 §7.3 的
             <code className="mx-0.5 rounded bg-red-100 px-1">E_MISSING_EVIDENCE</code>
             规则，它应当被降级为 failed。
           </p>

@@ -13,6 +13,7 @@
  *     · 主要问题 —— §7.1 的 issue，带 code
  *     · 需要你做的 + 原因 —— assignee_reason 枚举翻译来的
  */
+import type { NodeAction } from '../../lib/simulation'
 import type { Assignee, StructureIssue } from '../../types/outline'
 import { reasonText } from '../../lib/reasons'
 import type { MapSummary, PendingTodo } from '../../lib/summary'
@@ -33,12 +34,15 @@ export function AgentMessage({
   onConfirm,
   onApproveAll,
   onMarkUserDone,
+  onItemAction,
   canConfirm,
 }: {
   summary: MapSummary
   onConfirm: () => void
   onApproveAll: () => void
   onMarkUserDone: () => void
+  /** 对【单条】待办的操作。与画布详情面板共用同一套语义。 */
+  onItemAction: (nodeId: string, action: NodeAction) => void
   canConfirm: boolean
 }) {
   return (
@@ -64,28 +68,27 @@ export function AgentMessage({
       </header>
 
       <div className="space-y-2.5 px-3 py-2.5">
-        <TodoGroup tone="user" todos={summary.userTodos} />
-        <TodoGroup tone="blocked" todos={summary.blockers} />
-        <TodoGroup tone="approval" todos={summary.awaitingApproval} />
+        <TodoGroup tone="user" todos={summary.userTodos} onItemAction={onItemAction} />
+        <TodoGroup tone="blocked" todos={summary.blockers} onItemAction={onItemAction} />
+        <TodoGroup tone="approval" todos={summary.awaitingApproval} onItemAction={onItemAction} />
         <ProblemList issues={summary.problems} />
       </div>
 
-      {/* ── 可执行的下一步 ────────────────────────────────── */}
+      {/* ── 可执行的下一步 ──────────────────────────────────
+       * 逐项操作在上面每一条上了（那才是主路径）。
+       * 这里只保留"一次处理多条"的快捷方式，且仅在确实多于一条时才出现 ——
+       * 只有一条时它是冗余的，会让人以为两种操作有什么不同。 */}
       <footer className="flex flex-wrap gap-1.5 border-t border-slate-100 px-3 py-2.5">
         {canConfirm && (
           <Action onClick={onConfirm} primary>
             确认并开始执行
           </Action>
         )}
-        {summary.awaitingApproval.length > 0 && (
-          <Action onClick={onApproveAll}>
-            批准 {summary.awaitingApproval.length} 项待确认
-          </Action>
+        {summary.awaitingApproval.length > 1 && (
+          <Action onClick={onApproveAll}>全部批准（{summary.awaitingApproval.length}）</Action>
         )}
-        {summary.userTodos.length > 0 && (
-          <Action onClick={onMarkUserDone}>
-            标记「需要你做」已完成
-          </Action>
+        {summary.userTodos.length > 1 && (
+          <Action onClick={onMarkUserDone}>全部标记完成（{summary.userTodos.length}）</Action>
         )}
       </footer>
     </div>
@@ -94,7 +97,15 @@ export function AgentMessage({
 
 /* ── 分组列表 ─────────────────────────────────────────────── */
 
-function TodoGroup({ tone, todos }: { tone: 'user' | 'blocked' | 'approval'; todos: PendingTodo[] }) {
+function TodoGroup({
+  tone,
+  todos,
+  onItemAction,
+}: {
+  tone: 'user' | 'blocked' | 'approval'
+  todos: PendingTodo[]
+  onItemAction: (nodeId: string, action: NodeAction) => void
+}) {
   if (todos.length === 0) return null
   const t = TONE[tone]
 
@@ -105,19 +116,27 @@ function TodoGroup({ tone, todos }: { tone: 'user' | 'blocked' | 'approval'; tod
       </h3>
       <ul className="space-y-1">
         {todos.map((todo) => (
-          <TodoItem key={todo.id} todo={todo} tone={tone} />
+          <TodoItem key={todo.id} todo={todo} tone={tone} onAction={onItemAction} />
         ))}
       </ul>
     </section>
   )
 }
 
-function TodoItem({ todo, tone }: { todo: PendingTodo; tone: 'user' | 'blocked' | 'approval' }) {
+function TodoItem({
+  todo,
+  tone,
+  onAction,
+}: {
+  todo: PendingTodo
+  tone: 'user' | 'blocked' | 'approval'
+  onAction: (nodeId: string, action: NodeAction) => void
+}) {
   const t = TONE[tone]
   const rt = reasonText(todo.reason)
 
   return (
-    <li className="flex gap-1.5 text-[11px] leading-snug">
+    <li className="flex items-start gap-1.5 text-[11px] leading-snug">
       {/* 用画布上同一套线型标记归属 —— 虚线=归你、点线=卡住 */}
       <span
         className={`mt-[3px] h-2.5 w-3 shrink-0 rounded-[2px] border-[1.5px] ${
@@ -125,9 +144,10 @@ function TodoItem({ todo, tone }: { todo: PendingTodo; tone: 'user' | 'blocked' 
         } ${t.dot}`}
         aria-hidden
       />
-      <span className="min-w-0">
+
+      <span className="min-w-0 flex-1">
         <span className="text-slate-700">{todo.title}</span>
-        {/* 原因由枚举翻译而来，顺带带上出处 —— 每句话都可追溯 */}
+        {/* 原因由枚举翻译而来 —— 每句话都可追溯到文档里的一条规则 */}
         {rt && <span className="text-slate-400"> — {rt.why}</span>}
         {todo.detail && (
           <code className="ml-1 rounded bg-slate-100 px-1 font-mono text-[10px] text-slate-500">
@@ -135,7 +155,48 @@ function TodoItem({ todo, tone }: { todo: PendingTodo; tone: 'user' | 'blocked' 
           </code>
         )}
       </span>
+
+      {/* 逐条操作。等审批的两条路都给 —— 批准和否决都是正常的用户决定，
+          "只能同意"不是审批，是通知。 */}
+      <span className="flex shrink-0 gap-1">
+        {tone === 'approval' ? (
+          <>
+            <Mini onClick={() => onAction(todo.id, 'approve')}>批准</Mini>
+            <Mini onClick={() => onAction(todo.id, 'reject')} danger>
+              否决
+            </Mini>
+          </>
+        ) : (
+          <Mini onClick={() => onAction(todo.id, 'complete')}>完成</Mini>
+        )}
+      </span>
     </li>
+  )
+}
+
+/** 行内小按钮。样式刻意低调 —— 它是"就地处事"，不该抢正文的注意力。 */
+function Mini({
+  onClick,
+  children,
+  danger,
+}: {
+  onClick: () => void
+  children: React.ReactNode
+  danger?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'cursor-pointer rounded border px-1.5 py-0.5 text-[10px] transition-colors',
+        danger
+          ? 'border-rejected/30 text-rejected hover:bg-rejected-soft'
+          : 'border-slate-200 text-slate-500 hover:bg-slate-100',
+      ].join(' ')}
+    >
+      {children}
+    </button>
   )
 }
 

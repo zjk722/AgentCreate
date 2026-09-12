@@ -146,6 +146,12 @@ function fallbackOutcome(n: OutlineNode): ExecutionOutcome {
 /* ── 用户侧的动作 ─────────────────────────────────────────── */
 
 /**
+ * 用户能对【单个节点】做的三种操作。
+ * 对话框里的待办列表和画布的详情面板共用这一套 —— 两处入口，同一个语义。
+ */
+export type NodeAction = 'approve' | 'reject' | 'complete'
+
+/**
  * 批准一个待确认的节点（§9.2 的审批流）。
  *
  * ⚠️ 真实系统里这一步在 Java Host 侧，且要写 approvals 表 + 审计（§4.1 / §10.1）。
@@ -166,6 +172,52 @@ export function approveAll(outline: OutlineNode[]): OutlineNode[] {
     n.approval?.status === 'pending'
       ? { ...n, approval: { ...n.approval, status: 'approved' as const } }
       : n,
+  )
+}
+
+/**
+ * 否决一个待确认的节点 —— §5.2 的 rejected 转移。
+ *
+ * ⚑ 这是「人机边界」最完整的一次落地，一次点击触发三件事：
+ *
+ *     审批： pending  → rejected        审计事实，【不清空】
+ *     归属： agent    → user            你不让它做，那就你自己来
+ *     状态： → todo                     回到待办，等你处理
+ *     原因： → user_rejected            这样界面上能说出"你否决了它"
+ *
+ *   注意 approval.status 保留 rejected 而不是删掉 —— 它是审计事实（§10.1）。
+ *   「已完成却仍挂着 rejected」这个坑由 displayState() 的护栏挡掉（见 lib/outline.ts）。
+ */
+export function rejectNode(outline: OutlineNode[], nodeId: string): OutlineNode[] {
+  return outline.map((n) => {
+    if (n.id !== nodeId) return n
+    // 只有 pending 的能被否决，其余原样返回（幂等）
+    if (n.approval?.status !== 'pending') return n
+
+    return {
+      ...n,
+      assignee: 'user' as const,
+      assignee_reason: 'user_rejected' as const,
+      status: 'todo' as const,
+      approval: { ...n.approval, status: 'rejected' as const },
+    }
+  })
+}
+
+/**
+ * 标记【单个】节点已完成。
+ *
+ * 用途有两类：
+ *   · 用户自己在图上勾掉"我做完了"
+ *   · 卡住的节点由用户在系统外解决后回来标记
+ *
+ * ⚠️ 它不产出 `evidence` —— 这是有意的，见 lib/outline.ts 的说明：
+ *   「无证据的 done 降级为 failed」针对的是【Agent 的自我报告】。
+ *   人勾的完成由人负责，不需要工具调用记录来背书。
+ */
+export function completeNode(outline: OutlineNode[], nodeId: string): OutlineNode[] {
+  return outline.map((n) =>
+    n.id === nodeId && n.status !== 'done' ? { ...n, status: 'done' as const } : n,
   )
 }
 

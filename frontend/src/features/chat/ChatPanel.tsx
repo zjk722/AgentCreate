@@ -12,6 +12,7 @@
  *   · 有结果     → AgentMessage 卡片（内容全部来自 summarize()）
  */
 import { useEffect, useRef } from 'react'
+import type { NodeAction } from '../../lib/simulation'
 import type { MapSummary } from '../../lib/summary'
 import { AgentMessage } from './AgentMessage'
 
@@ -23,6 +24,8 @@ export interface ChatPanelProps {
   onConfirm: () => void
   onApproveAll: () => void
   onMarkUserDone: () => void
+  /** 对单条待办的操作 —— 与画布详情面板共用同一套语义 */
+  onItemAction: (nodeId: string, action: NodeAction) => void
   /** 用于自动滚到底部的依赖 —— 进度变化时就该滚 */
   scrollKey: string | number
 }
@@ -35,6 +38,7 @@ export function ChatPanel({
   onConfirm,
   onApproveAll,
   onMarkUserDone,
+  onItemAction,
   scrollKey,
 }: ChatPanelProps) {
   const endRef = useRef<HTMLDivElement>(null)
@@ -66,6 +70,7 @@ export function ChatPanel({
           onConfirm={onConfirm}
           onApproveAll={onApproveAll}
           onMarkUserDone={onMarkUserDone}
+          onItemAction={onItemAction}
         />
       )}
 

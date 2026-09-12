@@ -27,9 +27,13 @@ import { ChatPanel } from './features/chat/ChatPanel'
 import { buildTree } from './lib/outline'
 import {
   advance,
+  approve,
   approveAll,
+  completeNode,
   markUserTasksDone,
+  rejectNode,
   type ExecutionPlan,
+  type NodeAction,
 } from './lib/simulation'
 import { summarize } from './lib/summary'
 import { datasets, pickDataset, type MockDataset } from './mocks'
@@ -122,6 +126,24 @@ export default function App() {
     if (phase === 'settled') setPhase('executing')
   }
 
+  /**
+   * 对【单个节点】的操作 —— 两个入口共用这一个处理函数：
+   *   · 对话区待办列表里的行内按钮
+   *   · 画布上点开节点后的详情面板
+   *
+   * ⚑ 两处入口、同一个语义，是这个设计的关键：用户在哪儿看到问题，
+   *   就能在哪儿解决它，不必先去另一个区域找到对应的那一条。
+   */
+  function handleNodeAction(nodeId: string, action: NodeAction) {
+    const next =
+      action === 'approve'
+        ? approve(outline, nodeId)
+        : action === 'reject'
+          ? rejectNode(outline, nodeId)
+          : completeNode(outline, nodeId)
+    applyUserAction(next)
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-100 text-slate-900">
       <aside className="flex w-[380px] shrink-0 flex-col border-r border-slate-200 bg-white">
@@ -138,6 +160,7 @@ export default function App() {
           onConfirm={confirm}
           onApproveAll={() => applyUserAction(approveAll(outline))}
           onMarkUserDone={() => applyUserAction(markUserTasksDone(outline))}
+          onItemAction={handleNodeAction}
           scrollKey={`${phase}:${outline.length}:${summary?.byStatus.done ?? 0}`}
         />
 
@@ -150,7 +173,7 @@ export default function App() {
         />
       </aside>
 
-      <TaskGraph outline={outline} />
+      <TaskGraph outline={outline} onNodeAction={handleNodeAction} />
     </div>
   )
 }

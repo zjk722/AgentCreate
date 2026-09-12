@@ -13,9 +13,12 @@ import {
   advance,
   approve,
   approveAll,
+  completeNode,
   markUserTasksDone,
+  rejectNode,
   type ExecutionPlan,
 } from './simulation'
+import { displayState } from './outline'
 
 const PLAN: ExecutionPlan = {
   t: { tool: 'x', result_summary: '跑完了', elapsed_ms: 100 },
@@ -247,6 +250,61 @@ describe('用户侧动作', () => {
       node('b', null, 1, '乙', { approval: { level: 'double_confirm', status: 'pending' } }),
     ])
     expect(next.every((n) => n.approval!.status === 'approved')).toBe(true)
+  })
+
+  it('⚑ rejectNode 触发完整的 §5.2 rejected 转移（一次点击改四样东西）', () => {
+    const outline = [
+      node('t', null, 0, '预订大阪酒店', {
+        assignee: 'agent',
+        status: 'todo',
+        approval: { level: 'confirm', status: 'pending' },
+      }),
+    ]
+    const [t] = rejectNode(outline, 't')
+
+    expect(t.approval!.status).toBe('rejected') // 审计事实
+    expect(t.assignee).toBe('user') // 你不让它做，那就你自己来
+    expect(t.assignee_reason).toBe('user_rejected') // 界面上能说出为什么
+    expect(t.status).toBe('todo') // 回到待办
+  })
+
+  it('rejectNode 不碰已经批准/拒绝的（幂等）', () => {
+    const approved = [
+      node('a', null, 0, '甲', { approval: { level: 'confirm', status: 'approved' } }),
+    ]
+    expect(rejectNode(approved, 'a')[0].approval!.status).toBe('approved')
+  })
+
+  it('rejectNode 不碰没有审批的节点', () => {
+    const plain = [node('a', null, 0, '甲', { status: 'todo' })]
+    const [a] = rejectNode(plain, 'a')
+    expect(a.assignee).toBe('agent')
+    expect(a.status).toBe('todo')
+  })
+
+  it('⚑ rejectNode 之后 displayState 显示为 rejected（与画布渲染对接）', () => {
+    const outline = [
+      node('t', null, 0, '甲', { status: 'todo', approval: { level: 'confirm', status: 'pending' } }),
+    ]
+    const [t] = rejectNode(outline, 't')
+    expect(displayState(t)).toBe('rejected')
+  })
+
+  it('⚑ completeNode 只动指定的那一个', () => {
+    const outline = [
+      node('a', null, 0, '甲', { assignee: 'user', status: 'todo' }),
+      node('b', null, 1, '乙', { assignee: 'user', status: 'todo' }),
+    ]
+    const next = completeNode(outline, 'a')
+    expect(next.find((n) => n.id === 'a')!.status).toBe('done')
+    expect(next.find((n) => n.id === 'b')!.status).toBe('todo')
+  })
+
+  it('completeNode 对已完成的节点是幂等的，且【不产出证据】', () => {
+    const outline = [node('a', null, 0, '甲', { status: 'done' })]
+    const [a] = completeNode(outline, 'a')
+    // 人勾的完成由人负责，不需要工具调用记录背书
+    expect(a.evidence).toBeUndefined()
   })
 
   it('⚑ markUserTasksDone 只动 assignee=user 的节点', () => {

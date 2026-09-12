@@ -14,6 +14,7 @@
 import { useMemo, useState } from 'react'
 import { DEFAULT_LAYOUT, layout } from '../../lib/layout'
 import { buildTree } from '../../lib/outline'
+import type { NodeAction } from '../../lib/simulation'
 import type { OutlineNode, StructureIssue } from '../../types/outline'
 import { DetailPanel } from './DetailPanel'
 import { GraphEdge } from './GraphEdge'
@@ -25,7 +26,14 @@ import type { Assignee, NodeStatus } from '../../types/outline'
 const ALL_STATUSES: NodeStatus[] = ['todo', 'running', 'done', 'failed', 'skipped']
 const ALL_ASSIGNEES: Assignee[] = ['agent', 'user', 'blocked']
 
-export function TaskGraph({ outline }: { outline: OutlineNode[] }) {
+export function TaskGraph({
+  outline,
+  onNodeAction,
+}: {
+  outline: OutlineNode[]
+  /** 用户在详情面板里对单个节点执行的操作。不传则面板只读。 */
+  onNodeAction?: (nodeId: string, action: NodeAction) => void
+}) {
   const [selected, setSelected] = useState<string | null>(null)
 
   // 结构重建（D2）→ 坐标计算（D3）。两者都是纯函数，用 useMemo 缓存，
@@ -83,7 +91,11 @@ export function TaskGraph({ outline }: { outline: OutlineNode[] }) {
       <Legend />
 
       {selectedNode && (
-        <DetailPanel node={selectedNode} onClose={() => setSelected(null)} />
+        <DetailPanel
+          node={selectedNode}
+          onClose={() => setSelected(null)}
+          onAction={onNodeAction ?? (() => {})}
+        />
       )}
     </main>
   )
