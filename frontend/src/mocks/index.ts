@@ -11,11 +11,43 @@
  *   §8.3 里那三条 🔴 Bad Case 尤其值得肉眼过一遍 ——
  *   它们断言的是"模型该收手时收手了没有"，这种判断机器很难替你做。
  */
+import type { ExecutionPlan } from '../lib/simulation'
 import type { OutlineNode } from '../types/outline'
 import { corruptSample } from './corrupt-sample'
 import { japanTrip } from './japan-trip'
 import { mlKnowledge } from './ml-knowledge'
 import { vagueMood } from './vague-mood'
+
+/**
+ * 模拟执行时各节点会产出什么。
+ *
+ * ⚑ 为什么这份"结果"必须放在 mock 里、而不是让前端编：
+ *   真实系统里这是【引擎返回的】，前端只是渲染。放进 mock 等于把
+ *   "未来会从哪来"这件事实标注清楚 —— 将来 A4 接上真引擎，
+ *   这个字段直接删掉，界面代码一行不用改。
+ *
+ * 没有条目的节点走 simulation.ts 的兜底产出。
+ */
+const japanExecution: ExecutionPlan = {
+  b20000000021: {
+    tool: 'hotel_search',
+    args: { city: '大阪', nights: 3 },
+    result_summary: '锁定难波 3 晚，共 ¥2070',
+    elapsed_ms: 2100,
+  },
+  b20000000022: {
+    tool: 'hotel_search',
+    args: { city: '京都', nights: 3 },
+    result_summary: '找到 4 家民宿，均价 ¥520/晚',
+    elapsed_ms: 1850,
+  },
+  b20000000027: {
+    tool: 'transfer_booking',
+    args: { from: 'KIX', to: '难波' },
+    result_summary: '已预约 3/12 关西机场接机',
+    elapsed_ms: 1400,
+  },
+}
 
 export interface MockDataset {
   /** 稳定标识，用于 React key 和 URL 参数 */
@@ -25,6 +57,8 @@ export interface MockDataset {
   /** 这份数据是哪来的、要演示什么 —— 直接显示在界面上，免得看成"真数据" */
   note: string
   outline: OutlineNode[]
+  /** 模拟执行时各节点会产出什么；不提供则该数据集跑起来只有兜底产出 */
+  execution?: ExecutionPlan
 }
 
 export const datasets: MockDataset[] = [
@@ -33,6 +67,7 @@ export const datasets: MockDataset[] = [
     goal: '帮我规划一次日本关西七日游',
     note: '§8.3 种子 #2 · 任务型，覆盖全部状态/归属/审批组合',
     outline: japanTrip,
+    execution: japanExecution,
   },
   {
     key: 'ml-knowledge',
