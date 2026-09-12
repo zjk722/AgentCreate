@@ -1,0 +1,20 @@
+# 仓库内所有文本文件统一为 LF，工作区也检出为 LF。
+#
+# 为什么现在就要：刚才提交时 git 报了 "LF will be replaced by CRLF"。
+# 不显式声明的话，行尾由每台机器的 core.autocrlf 各自决定 —— 同一份文件在
+# Windows 上存成 CRLF、在 Linux CI 上存成 LF，diff 会出现"整个文件都变了"。
+#
+# 为什么选 LF 而不是 CRLF：DEV_DOC §11 里有 Makefile 和 docker-compose.yml，
+# 说明这个项目最终跑在 Linux 容器里。CRLF 的 shell 脚本 / Makefile 进容器后
+# 会变成 `\r: command not found` —— 报错信息还完全指不到真正的原因。
+* text=auto eol=lf
+
+# 显式声明二进制，免得 git 对它们做行尾转换或文本 diff
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+*.jar  binary

@@ -1,0 +1,43 @@
+# ── 环境与密钥 ────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Python (python_agent/) ────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+# uv.lock / poetry.lock 要提交：A1 之后评测环境靠它复现
+
+# ── Java (java_backend/) ──────────────────────────────────
+target/
+*.class
+.gradle/
+build/
+
+# ── Node (frontend/) ──────────────────────────────────────
+node_modules/
+.vite/
+coverage/
+# package-lock.json / pnpm-lock.yaml 要提交
+
+# ── 编辑器 / 系统 ─────────────────────────────────────────
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ── Claude Code ───────────────────────────────────────────
+# skills/ 是 uipro 装的第三方模板（172 个文件），一条
+# `uipro init --ai claude` 即可复现，且不是本项目代码 —— 不入库。
+# 项目级 settings.json 保留可追踪，供后续共享 hooks/权限配置。
+.claude/skills/
+.claude/settings.local.json
+.claude/worktrees/
