@@ -1,9 +1,15 @@
 # Agent 任务图引擎 · 项目开发文档
 
-> **版本** v0.3
+> **版本** v0.4
 > **日期** 2026-09-12
 > **定位** 自然语言目标 → 可执行任务图 → 自主执行 → 人机边界标注
 > **关键词** 规划执行 · 人机边界 · 证据链 · 评测驱动 · MCP 双向
+
+> **v0.4 变更**（1 处）：
+> §4.2 补 `result_summary` 字段 —— §3.4 的 `/v1/execute_task` 一直在返回它，
+> 但 outline 里没有字段接，引擎产出了结果却无处可存。顺带记录两个并行缺口：
+> 失败原因（`execution_tasks.error`）同样没进 outline；以及为什么**不**存原始
+> 思维链（自我报告不可信、提示注入面、成本）。
 
 > **v0.3 变更**（前端 demo 设计评审的产出，共 9 处）：
 > §4.2 加 `approval` 字段与三轴正交说明、明确 `order` 连续约束、澄清 `level` 不进存储；
@@ -337,7 +343,14 @@ map_edit_proposals (
     "status": "done",             // ⚑ todo|running|done|failed|skipped
     "depends_on": ["7d2e8b45a901"],
     "locked": true,               // ⚑ 人工改过 → AI 不许碰
-    "evidence": {...},
+
+    "result_summary": "找到 12 家酒店，最低 ¥580/晚",   // ⚑ 产出摘要，见下
+    "evidence": {
+      "tool": "hotel_search",
+      "args": {"city": "大阪", "nights": 3},
+      "result_ref": "tool_call_9f2c",   // ⚑ 完整输出在这条审计记录里
+      "elapsed_ms": 2310
+    },
     "source_span": [[12, 48]],    // ⚑ RAG 溯源：对应原文的字符区间
 
     "approval": {                 // ⚑ 审批（A6 由 Java join approvals 表拍平）
@@ -357,9 +370,33 @@ map_edit_proposals (
 | `status` | 任务生命周期（见 §5.2）── **走到哪一步** |
 | `depends_on` | 依赖的节点 id 列表（DAG） |
 | `locked` | 人工改过 → AI 不覆盖 |
+| `result_summary` | **产出摘要**（见下）—— 用户看图时最想知道的东西 |
 | `evidence` | 执行证据（见 §5.2） |
 | `source_span` | 溯源到原文的字符区间（防幻觉） |
 | `approval` | 审批状态；由 Java 从 `approvals` 表 join 拍平 |
+
+#### ⚑ `result_summary`：摘要进节点，全文进审计
+
+§3.4 的 `/v1/execute_task` 一直返回 `result_summary`，但此前 `outline` 里**没有字段接它** ——
+引擎产出了结果，却无处可存。这是一个真缺口：用户盯着任务图，最想知道的正是
+「那个 Agent 到底查到了什么」，而在此之前节点上只有耗时。
+
+**为什么只存摘要，不存全文**：
+
+| | 放哪 | 理由 |
+|---|---|---|
+| `result_summary` | 节点（JSONB） | 短、跟着节点走、不需单独查询 |
+| 完整输出 | 审计日志 | 由 `evidence.result_ref` 指向（§5.2 已有的指针模式） |
+
+200 个节点 × 每条摘要数十字符是可接受的；换成完整输出（一次检索可能上千字）会把
+outline 撑爆，而 §4.3 明确要求 outline 是「写入原子、整批替换」的字段。
+
+**长度约束**：建议由生成侧截断到 ~40 字，超长截断加省略号 —— 与 `E_TITLE_TOO_LONG`
+同理，界面上放不下的东西不该进存储。
+
+> ⚠️ **相关的并行缺口**：失败原因（§4.1 `execution_tasks.error`）同样没有进 `outline`。
+> 一个 `failed` 节点在界面上目前说不出"为什么失败"。建议在补这条时一并处理，
+> 但要注意它与 `result_summary` 语义不同：一个是**结果**，一个是**诊断**，不要合并成一个字段。
 
 #### ⚑ 三个正交的轴（不要合并它们）
 

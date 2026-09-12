@@ -43,6 +43,26 @@ export function DetailPanel({
         </button>
       </header>
 
+      {/* ── 产出 ──────────────────────────────────────────
+       * ⚑ 放在最前面：用户点开一个节点，最想知道的是「它查到了什么」，
+       *   而不是它的状态机处于哪一格。 */}
+      {node.result_summary && (
+        <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
+          <h3 className="mb-1 text-[11px] font-semibold tracking-wide text-slate-500">
+            产出
+          </h3>
+          <p className="text-xs leading-relaxed text-slate-700">{node.result_summary}</p>
+          <p className="mt-1.5 text-[10px] text-slate-400">
+            完整输出见审计记录
+            {node.evidence?.result_ref && (
+              <code className="ml-1 rounded bg-slate-200/70 px-1 font-mono">
+                {node.evidence.result_ref}
+              </code>
+            )}
+          </p>
+        </div>
+      )}
+
       <dl className="space-y-2 px-4 py-3 text-xs">
         <Row label="状态">
           {STATUS_LABEL[node.status]}

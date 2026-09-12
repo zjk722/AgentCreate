@@ -78,6 +78,17 @@ export interface OutlineNode {
    */
   order: number
   title: string
+  /**
+   * 产出摘要 —— 用户看图时最想知道的东西：「那个 Agent 到底查到了什么」。
+   *
+   * ⚑ 只存【摘要】，完整输出在审计日志里，由 `evidence.result_ref` 指向。
+   *   理由：一次检索可能上千字，存进 JSONB 会把 outline 撑爆，
+   *   而 §4.3 要求 outline 是「写入原子、整批替换」的字段。
+   *
+   * 长度：生成侧应截断到 ~40 字（与 E_TITLE_TOO_LONG 同理 ——
+   * 界面上放不下的东西不该进存储）。
+   */
+  result_summary?: string | null
 
   assignee: Assignee
   status: NodeStatus

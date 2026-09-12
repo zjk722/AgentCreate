@@ -108,6 +108,16 @@ export function GraphNode({
           </span>
         )}
       </div>
+
+      {/* ── 产出摘要行 ───────────────────────────────────
+       * ⚑ 这一行是整个卡片的"为什么值得看"：用户盯着任务图时，
+       *   最想知道的就是 Agent 到底查到了什么，而不是它花了多久。
+       *   这里只放得下十来个字，完整内容在详情面板。 */}
+      {n.result_summary && (
+        <p className="truncate text-[10px] leading-tight text-slate-500">
+          {n.result_summary}
+        </p>
+      )}
     </button>
   )
 }

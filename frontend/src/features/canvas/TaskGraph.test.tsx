@@ -60,6 +60,23 @@ describe('TaskGraph · 渲染冒烟', () => {
     expect(html).not.toContain('游离节点')
   })
 
+  it('⚑ result_summary 会渲染到卡片上（不能只进类型定义不落地）', () => {
+    const japan = datasets.find((d) => d.key === 'japan-trip')!
+    const html = renderToString(<TaskGraph outline={japan.outline} />)
+    const withSummary = japan.outline.filter((n) => n.result_summary)
+    expect(withSummary.length).toBeGreaterThan(0)
+    for (const n of withSummary) {
+      expect(html, `节点「${n.title}」的产出摘要没渲染出来`).toContain(n.result_summary!)
+    }
+  })
+
+  it('没有 result_summary 的节点不会渲染出空行', () => {
+    // 未执行完的节点不该有产出摘要；有了会是脏数据
+    const japan = datasets.find((d) => d.key === 'japan-trip')!
+    const running = japan.outline.find((n) => n.status === 'running')
+    expect(running?.result_summary).toBeUndefined()
+  })
+
   it('japan 数据集里每个节点标题都出现在输出中（没被截断丢失）', () => {
     const japan = datasets.find((d) => d.key === 'japan-trip')!
     const html = renderToString(<TaskGraph outline={japan.outline} />)

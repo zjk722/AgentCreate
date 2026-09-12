@@ -67,8 +67,11 @@ export interface LayoutResult {
 export const DEFAULT_LAYOUT: LayoutOptions = {
   // 168px 是能容下 §7.2 上限的 12 个中文字（E_TITLE_TOO_LONG）的最小宽度
   nodeWidth: 168,
-  // 56px 放得下两行：标题行 + 元信息行（状态/归属/审批）
-  nodeHeight: 56,
+  // 68px 放得下三行：标题 / 状态元信息 / 产出摘要（result_summary）。
+  // ⚠️ 节点尺寸必须【统一】—— d3.tree 的 nodeSize 假定等高，
+  //    做成变高需要自定义 separation，不值得。
+  //    所以没有摘要的节点会留白，这是这个取舍的代价。
+  nodeHeight: 68,
   gapX: 64,
   gapY: 16,
   padding: 32,

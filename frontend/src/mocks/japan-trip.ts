@@ -28,8 +28,11 @@ export const japanTrip: OutlineNode[] = [
 
   /* ── 行前准备 ─────────────────────────────────────────── */
 
-  // 两个「agent + done + 有证据」—— §1.2 里带 [agent · done · 2.3s] 的那两条
+  // 两个「agent + done + 有证据 + 有产出」—— §1.2 里带 [agent · done · 2.3s] 的那两条。
+  // ⚑ 只有这两个节点同时有 result_summary 和 evidence：它们是"真正跑完并留下痕迹"
+  //   的样本，是「证据链」这个卖点的完整形态。
   node('b20000000011', 'b20000000001', 0, '查往返机票价格', {
+    result_summary: '往返 ¥3200，3/12 出发最低',
     evidence: {
       tool: 'flight_search',
       args: { from: '上海', to: '大阪', round_trip: true },
@@ -39,6 +42,7 @@ export const japanTrip: OutlineNode[] = [
     },
   }),
   node('b20000000012', 'b20000000001', 1, '查当前汇率', {
+    result_summary: '1 JPY ≈ 0.0482 CNY',
     evidence: {
       tool: 'fx_rate',
       args: { base: 'JPY', quote: 'CNY' },
