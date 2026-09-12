@@ -144,6 +144,25 @@ describe('AgentMessage · 逐条操作（不是只能全选）', () => {
     expect(html).toContain('>否决<')
   })
 
+  it('⚑ 失败的条目给「我来处理 / 不处理」两条路', () => {
+    const one = [node('f', null, 0, '购买旅行保险', { status: 'failed' })]
+    const html = render(one)
+    expect(html).toContain('需要你决定')
+    expect(html).toContain('购买旅行保险')
+    // 系统不替用户判断"还值不值得做" —— 两条路都要给
+    expect(html).toContain('我来处理')
+    expect(html).toContain('不处理')
+  })
+
+  it('「需要你决定」排在其他组前面（它是唯一需要判断的）', () => {
+    const outline = [
+      node('f', null, 0, '失败的', { status: 'failed' }),
+      node('u', null, 1, '归你的', { assignee: 'user', status: 'todo' }),
+    ]
+    const html = render(outline)
+    expect(html.indexOf('需要你决定')).toBeLessThan(html.indexOf('需要你做'))
+  })
+
   it('卡住的条目也给「完成」（用户在系统外解决后回来标记）', () => {
     const one = [
       node('a', null, 0, '甲', {

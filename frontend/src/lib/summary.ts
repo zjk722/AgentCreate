@@ -60,6 +60,14 @@ export interface MapSummary {
 
   /** 需要用户自己做的（assignee=user 且还没完成） */
   userTodos: PendingTodo[]
+  /**
+   * Agent 失败了、**等用户决定怎么处置**的（§5.2 的人工分支）。
+   *
+   * ⚑ 这一组单独列出来，是因为它和前几组【性质不同】：
+   *   前几组是"该谁做"，这一组是"**还没人决定要不要做**"。
+   *   系统不替用户判断"这件事还值不值得做"——所以它必须显式出现在汇报里。
+   */
+  failedTasks: PendingTodo[]
   /** 卡住的（assignee=blocked） */
   blockers: PendingTodo[]
   /** 等用户点头的（approval=pending） */
@@ -90,8 +98,24 @@ export function summarize(outline: OutlineNode[], issues: StructureIssue[]): Map
   const byStatus = { ...EMPTY_STATUS }
   const byAssignee = { ...EMPTY_ASSIGNEE }
   const userTodos: PendingTodo[] = []
+  const failedTasks: PendingTodo[] = []
   const blockers: PendingTodo[] = []
   const awaitingApproval: PendingTodo[] = []
+
+  /**
+   * 哪些是【分组节点】（容器）。
+   *
+   * ⚑ 为什么必须认出来：容器不是可执行任务，**你没法"做"一个分组**。
+   *   而且容器状态是【派生的】（`rolled 后的 status 会从子节点汇总上来）——
+   *   所以一个容器会因为子节点失败而显示 failed，但它本身
+   *   不该出现在「需要你决定」「需要你做」这些【可操作】列表里。
+   *
+   *   从扁平数组里就能算出来：**任何被别的节点当作 parent_id 的，就是容器**。
+   */
+  const containers = new Set(
+    outline.map((n) => n.parent_id).filter((id): id is string => id !== null),
+  )
+  const isTask = (n: OutlineNode) => !containers.has(n.id)
 
   for (const n of outline) {
     byStatus[n.status]++
@@ -109,9 +133,15 @@ export function summarize(outline: OutlineNode[], issues: StructureIssue[]): Map
     //   · awaitingApproval  —— 归属是 Agent，但卡在等点头
     //   · blockers          —— 谁都做不了
     // 一个节点可以同时出现在前两类里（先审批、批完仍归你），这是对的。
+    // ⚑ 四个"需要人管"的组都排除容器 —— 分组没有"做不做"这回事。
+    //   注意 byStatus / byAssignee 仍然统计全部节点（那是整图的计数）。
+    if (!isTask(n)) continue
+
     if (n.assignee === 'user' && n.status !== 'done') userTodos.push(todo)
     if (n.assignee === 'blocked' && n.status !== 'done') blockers.push(todo)
     if (n.approval?.status === 'pending') awaitingApproval.push(todo)
+    // Agent 失败了、还没被处置的 —— 等用户决定"还做不做"
+    if (n.status === 'failed' && n.assignee === 'agent') failedTasks.push(todo)
   }
 
   const total = outline.length
@@ -123,7 +153,7 @@ export function summarize(outline: OutlineNode[], issues: StructureIssue[]): Map
     a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1,
   )
 
-  const verdict = decideVerdict({ total, byStatus, issues })
+  const verdict = decideVerdict({ total, byStatus, issues, failedTasks })
 
   return {
     total,
@@ -132,10 +162,11 @@ export function summarize(outline: OutlineNode[], issues: StructureIssue[]): Map
     progress,
     verdict,
     userTodos,
+    failedTasks,
     blockers,
     awaitingApproval,
     problems,
-    headline: headlineOf({ verdict, total, byStatus, userTodos, blockers, problems }),
+    headline: headlineOf({ verdict, total, byStatus, userTodos, failedTasks, blockers, problems }),
   }
 }
 
@@ -149,17 +180,27 @@ function decideVerdict({
   total,
   byStatus,
   issues,
+  failedTasks,
 }: {
   total: number
   byStatus: Record<NodeStatus, number>
   issues: StructureIssue[]
+  failedTasks: PendingTodo[]
 }): Verdict {
   if (total === 0) return 'empty'
   if (hasBlockingIssue(issues)) return 'blocked'
+
+  // ⚑ 有【等用户决定】的失败 → 判为 partial，而不是 running。
+  //
+  //   和容器汇总里「failed 压过 running」是同一条原则：
+  //   **把异常顶到用户眼前。** 一件事失败了、等人决定，此时说"进行中"
+  //   会让用户以为一切正常 —— 而他的汇报里最该出现的恰恰是那条待决事项。
+  if (failedTasks.length > 0) return 'partial'
+
   if (byStatus.running > 0) return 'running'
   if (byStatus.done === total) return 'complete'
-  // failed / skipped 也算"不是干净的待办"，因为它们需要人来收尾
-  if (byStatus.done > 0 || byStatus.failed > 0 || byStatus.skipped > 0) return 'partial'
+  // skipped 也算"不是干净的待办"：它需要人来收尾（或者已经被人接受地放弃了）
+  if (byStatus.done > 0 || byStatus.skipped > 0) return 'partial'
   return 'pending'
 }
 
@@ -169,6 +210,7 @@ function headlineOf({
   total,
   byStatus,
   userTodos,
+  failedTasks,
   blockers,
   problems,
 }: {
@@ -176,6 +218,7 @@ function headlineOf({
   total: number
   byStatus: Record<NodeStatus, number>
   userTodos: PendingTodo[]
+  failedTasks: PendingTodo[]
   blockers: PendingTodo[]
   problems: StructureIssue[]
 }): string {
@@ -199,7 +242,9 @@ function headlineOf({
 
     case 'partial': {
       const parts = [`已完成 ${byStatus.done}/${total}`]
-      if (byStatus.failed > 0) parts.push(`${byStatus.failed} 项失败`)
+      // ⚑ 说"待你决定"而不是"失败"：前者是【待办】，后者只是【陈述】。
+      //   汇报的价值在于告诉用户下一步做什么，不在于复述发生了什么。
+      if (failedTasks.length > 0) parts.push(`${failedTasks.length} 项待你决定`)
       if (blockers.length > 0) parts.push(`${blockers.length} 项卡住`)
       if (userTodos.length > 0) parts.push(`${userTodos.length} 项需要你`)
       return parts.join('，') + '。'

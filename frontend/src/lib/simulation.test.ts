@@ -14,6 +14,7 @@ import {
   approve,
   approveAll,
   completeNode,
+  handleFailure,
   markUserTasksDone,
   rejectNode,
   type ExecutionPlan,
@@ -152,26 +153,53 @@ describe('advance · 拒绝执行的四条规则', () => {
     expect(t2.find((n) => n.id === 'c')!.status).toBe('running')
   })
 
-  it('依赖失败 → 下游 skipped（级联）', () => {
+  it('⚑ 依赖【只是 failed】（还没被决定）→ 下游【不】级联跳过，等着', () => {
+    // 这是对 §5.2「依赖失败 → 下游 skipped」的一处收紧：
+    // failed 意味着还没被决定，此时级联等于提前替用户放弃下游。
+    expect(
+      advance(
+        [
+          node('bad', null, 0, '上游失败', { status: 'failed' }),
+          node('t', null, 1, '下游', { status: 'todo', depends_on: ['bad'] }),
+        ],
+        PLAN,
+      ),
+    ).toBeNull() // 无变化
+  })
+
+  it('⚑ 上游被【放弃】（skipped）→ 下游这时才级联跳过', () => {
     const next = advance(
       [
-        node('bad', null, 0, '上游失败', { status: 'failed' }),
-        node('t', null, 1, '下游', { status: 'todo', depends_on: ['bad'] }),
+        node('skip', null, 0, '上游放弃', { status: 'skipped' }),
+        node('t', null, 1, '下游', { status: 'todo', depends_on: ['skip'] }),
       ],
       PLAN,
     )!
     expect(next.find((n) => n.id === 't')!.status).toBe('skipped')
   })
 
-  it('依赖被跳过 → 下游同样 skipped', () => {
-    const next = advance(
-      [
-        node('skip', null, 0, '上游跳过', { status: 'skipped' }),
-        node('t', null, 1, '下游', { status: 'todo', depends_on: ['skip'] }),
-      ],
-      PLAN,
-    )!
-    expect(next.find((n) => n.id === 't')!.status).toBe('skipped')
+  it('⚑ 完整链路：failed → 用户选「不处理」→ 下游才级联', () => {
+    const outline = [
+      node('bad', null, 0, '上游失败', { status: 'failed' }),
+      node('t', null, 1, '下游', { status: 'todo', depends_on: ['bad'] }),
+    ]
+    // 第一步：用户决定不处理
+    const afterDiscard = handleFailure(outline, 'bad', 'discard')
+    expect(afterDiscard.find((n) => n.id === 'bad')!.status).toBe('skipped')
+    // 第二步：这时下游才被级联跳过
+    const after = advance(afterDiscard, PLAN)!
+    expect(after.find((n) => n.id === 't')!.status).toBe('skipped')
+  })
+
+  it('⚑ 完整链路：failed → 用户选「我来处理」→ 下游【不】被跳过', () => {
+    const outline = [
+      node('bad', null, 0, '上游失败', { status: 'failed' }),
+      node('t', null, 1, '下游', { status: 'todo', depends_on: ['bad'] }),
+    ]
+    const afterHandle = handleFailure(outline, 'bad', 'handle')
+    expect(afterHandle.find((n) => n.id === 'bad')!.status).toBe('todo')
+    // 下游仍然是 todo（既没跳过，也还没到能执行的时候）
+    expect(afterHandle.find((n) => n.id === 't')!.status).toBe('todo')
   })
 })
 
@@ -288,6 +316,34 @@ describe('用户侧动作', () => {
     ]
     const [t] = rejectNode(outline, 't')
     expect(displayState(t)).toBe('rejected')
+  })
+
+  it('⚑ handleFailure「我来处理」→ assignee=user + status=todo', () => {
+    const outline = [node('f', null, 0, '保险', { status: 'failed' })]
+    const [f] = handleFailure(outline, 'f', 'handle')
+    expect(f.assignee).toBe('user')
+    expect(f.status).toBe('todo')
+    expect(f.assignee_reason).toBe('agent_failed') // 界面上能说出为什么归你
+  })
+
+  it('⚑ handleFailure「不处理」→ assignee=user + status=skipped', () => {
+    const outline = [node('f', null, 0, '保险', { status: 'failed' })]
+    const [f] = handleFailure(outline, 'f', 'discard')
+    expect(f.assignee).toBe('user')
+    expect(f.status).toBe('skipped')
+    expect(f.assignee_reason).toBe('agent_failed')
+  })
+
+  it('handleFailure 只作用于「agent 且 failed」的节点（幂等 + 不误伤）', () => {
+    const outline = [
+      node('ok', null, 0, '已完成的', { status: 'done' }),
+      node('todo', null, 1, '待办的', { status: 'todo' }),
+      node('userfail', null, 2, '归用户的失败', { status: 'failed', assignee: 'user' }),
+    ]
+    // 已经处置过的（assignee 已不是 agent）不该再被改
+    expect(handleFailure(outline, 'ok', 'discard')[0].status).toBe('done')
+    expect(handleFailure(outline, 'todo', 'discard')[1].status).toBe('todo')
+    expect(handleFailure(outline, 'userfail', 'discard')[2].status).toBe('failed')
   })
 
   it('⚑ completeNode 只动指定的那一个', () => {

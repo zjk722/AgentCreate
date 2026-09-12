@@ -20,6 +20,7 @@
 import type {
   DisplayState,
   NodeId,
+  NodeStatus,
   OutlineNode,
   StructureIssue,
 } from '../types/outline'
@@ -199,6 +200,70 @@ export function buildTree(outline: OutlineNode[]): BuildResult {
   }
 
   return { roots, detached, issues }
+}
+
+/* ── 容器节点的状态汇总 ───────────────────────────────────── */
+
+/**
+ * 把一组子节点的状态汇总成父节点的状态。
+ *
+ * ⚑ 为什么容器需要汇总，而不是自己有事推：
+ *   「准备一次日本关西七日游」这种**分组节点**不是可执行任务 ——
+ *   调度器不会去"执行"它（见 simulation.ts 的 containers 判断）。
+ *   但它又必须有个状态显示给用户。**没有汇总的话它会永远停在初始值。**
+ *
+ * ⚑ 为什么是【派生】而不是【存下来】：
+ *   存下来就会漂移 —— 父节点说 done 而子任务还没做完。
+ *   派生则永远不会不一致，因为它是算出来的。
+ *
+ * ⚑ 判断顺序就是优先级：
+ *
+ *     1. 有 failed        → failed     ← 【最高】有未处理的失败，整体就不算好
+ *     2. 有 running       → running
+ *     3. 全 done / skipped → done      ← skipped 算"已了结"（见下）
+ *     4. 全 todo          → todo
+ *     5. 其余             → running    （部分了结 + 部分未开工 = 进行中）
+ *
+ *   **为什么 failed 压过 running**：下面的子任务还在跑、上面有一个失败了，
+ *   显示 running 会让人以为一切正常。**把异常顶到用户眼前是这项目的产品立场**
+ *   （和"坏数据显式显示不静默丢弃"是同一条原则）。
+ *
+ *   **为什么 skipped 算已了结**：skipped 只应来自「用户有意放弃」
+ *   或「从用户放弃级联而来」（见 simulation.ts）。既然是人接受的，
+ *   父节点就该算完成 —— 但注意【完成度百分比仍按 done 计】，
+ *   "了结了"和"都做完了"不是同一件事，两个数字都真实。
+ */
+export function combineStatus(children: NodeStatus[]): NodeStatus {
+  if (children.length === 0) return 'todo'
+  if (children.some((s) => s === 'failed')) return 'failed'
+  if (children.some((s) => s === 'running')) return 'running'
+  if (children.every((s) => s === 'done' || s === 'skipped')) return 'done'
+  if (children.every((s) => s === 'todo')) return 'todo'
+  return 'running'
+}
+
+/**
+ * 为一棵树里的【每个】节点算出展示状态。
+ *
+ * 叶子节点用自己存储的 `status`；容器节点用子节点的汇总。
+ * 返回 Map<nodeId, NodeStatus>，调用方据此覆盖展示值 —— **不改原数据**。
+ *
+ * 单次自底向上遍历，O(n)。
+ */
+export function rollupStatuses(roots: TreeNode[]): Map<string, NodeStatus> {
+  const out = new Map<string, NodeStatus>()
+
+  const walk = (t: TreeNode): NodeStatus => {
+    const status =
+      t.children.length === 0
+        ? t.node.status
+        : combineStatus(t.children.map(walk))
+    out.set(t.node.id, status)
+    return status
+  }
+
+  for (const r of roots) walk(r)
+  return out
 }
 
 /* ── 质量门禁的唯一闸门（§7.1） ───────────────────────────── */

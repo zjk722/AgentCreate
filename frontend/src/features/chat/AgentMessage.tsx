@@ -19,14 +19,19 @@ import { reasonText } from '../../lib/reasons'
 import type { MapSummary, PendingTodo } from '../../lib/summary'
 import { ASSIGNEE_BORDER_STYLE } from '../canvas/styles'
 
-/** 与画布共用同一套线型语言，让"虚线 = 归你"在这里也成立 */
-const TONE: Record<
-  'user' | 'blocked' | 'approval',
-  { border: Assignee | null; title: string; dot: string }
-> = {
+/**
+ * 四种待办的语气。与画布共用同一套线型语言，让"虚线 = 归你"在这里也成立。
+ *
+ * ⚑ `failed` 排在第一位，因为它是唯一一个【需要人做判断】的组 ——
+ *   其余三组都是"知道该干什么，只是还没干"。这组是"还没人决定要不要干"。
+ */
+type Tone = 'failed' | 'approval' | 'user' | 'blocked'
+
+const TONE: Record<Tone, { border: Assignee | null; title: string; dot: string }> = {
+  failed: { border: 'agent', title: '需要你决定', dot: 'border-red-500' },
+  approval: { border: null, title: '等你点头', dot: 'border-amber-400' },
   user: { border: 'user', title: '需要你做', dot: 'border-slate-500' },
   blocked: { border: 'blocked', title: '卡住了', dot: 'border-red-400' },
-  approval: { border: null, title: '等你点头', dot: 'border-amber-400' },
 }
 
 export function AgentMessage({
@@ -68,9 +73,10 @@ export function AgentMessage({
       </header>
 
       <div className="space-y-2.5 px-3 py-2.5">
+        <TodoGroup tone="failed" todos={summary.failedTasks} onItemAction={onItemAction} />
+        <TodoGroup tone="approval" todos={summary.awaitingApproval} onItemAction={onItemAction} />
         <TodoGroup tone="user" todos={summary.userTodos} onItemAction={onItemAction} />
         <TodoGroup tone="blocked" todos={summary.blockers} onItemAction={onItemAction} />
-        <TodoGroup tone="approval" todos={summary.awaitingApproval} onItemAction={onItemAction} />
         <ProblemList issues={summary.problems} />
       </div>
 
@@ -102,7 +108,7 @@ function TodoGroup({
   todos,
   onItemAction,
 }: {
-  tone: 'user' | 'blocked' | 'approval'
+  tone: Tone
   todos: PendingTodo[]
   onItemAction: (nodeId: string, action: NodeAction) => void
 }) {
@@ -129,7 +135,7 @@ function TodoItem({
   onAction,
 }: {
   todo: PendingTodo
-  tone: 'user' | 'blocked' | 'approval'
+  tone: Tone
   onAction: (nodeId: string, action: NodeAction) => void
 }) {
   const t = TONE[tone]
@@ -137,7 +143,7 @@ function TodoItem({
 
   return (
     <li className="flex items-start gap-1.5 text-[11px] leading-snug">
-      {/* 用画布上同一套线型标记归属 —— 虚线=归你、点线=卡住 */}
+      {/* 用画布上同一套线型标记归属 —— 虚线=归你、点线=卡住、实线=Agent 的活 */}
       <span
         className={`mt-[3px] h-2.5 w-3 shrink-0 rounded-[2px] border-[1.5px] ${
           t.border ? ASSIGNEE_BORDER_STYLE[t.border] : 'border-dashed'
@@ -156,17 +162,29 @@ function TodoItem({
         )}
       </span>
 
-      {/* 逐条操作。等审批的两条路都给 —— 批准和否决都是正常的用户决定，
-          "只能同意"不是审批，是通知。 */}
+      {/* 逐条操作。
+       *  ⚑ 三组各有各的两条路，而且【都必须给两条】：
+       *    · 审批：批准 / 否决 —— "只能同意"不是审批，是通知
+       *    · 失败：我来处理 / 不处理 —— 系统不替用户判断还值不值得做
+       *    · 其余：完成 */}
       <span className="flex shrink-0 gap-1">
-        {tone === 'approval' ? (
+        {tone === 'approval' && (
           <>
             <Mini onClick={() => onAction(todo.id, 'approve')}>批准</Mini>
             <Mini onClick={() => onAction(todo.id, 'reject')} danger>
               否决
             </Mini>
           </>
-        ) : (
+        )}
+        {tone === 'failed' && (
+          <>
+            <Mini onClick={() => onAction(todo.id, 'handle')}>我来处理</Mini>
+            <Mini onClick={() => onAction(todo.id, 'discard')} danger>
+              不处理
+            </Mini>
+          </>
+        )}
+        {(tone === 'user' || tone === 'blocked') && (
           <Mini onClick={() => onAction(todo.id, 'complete')}>完成</Mini>
         )}
       </span>

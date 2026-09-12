@@ -30,6 +30,8 @@ export function DetailPanel({
   //   否则"Agent 有没有真做完"这个最关键的信息就被污染了。
   const canComplete = node.status !== 'done' && node.assignee !== 'agent'
   const canDecide = node.approval?.status === 'pending'
+  // Agent 失败了、还没被处置 —— 等用户决定"还做不做"（§5.2 的人工分支）
+  const canResolveFailure = node.status === 'failed' && node.assignee === 'agent'
 
   return (
     <aside className="absolute top-4 right-4 z-10 w-80 rounded-lg border border-slate-200 bg-white/95 shadow-lg backdrop-blur">
@@ -51,8 +53,26 @@ export function DetailPanel({
       </header>
 
       {/* ── 可执行的操作 ─────────────────────────────────── */}
-      {(canDecide || canComplete) && (
+      {(canDecide || canComplete || canResolveFailure) && (
         <div className="flex flex-wrap gap-1.5 border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+          {canResolveFailure && (
+            <>
+              <button
+                type="button"
+                onClick={() => onAction(node.id, 'handle')}
+                className="cursor-pointer rounded bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-slate-700"
+              >
+                我来处理
+              </button>
+              <button
+                type="button"
+                onClick={() => onAction(node.id, 'discard')}
+                className="cursor-pointer rounded border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-50"
+              >
+                不处理
+              </button>
+            </>
+          )}
           {canDecide && (
             <>
               <button

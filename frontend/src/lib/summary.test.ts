@@ -150,6 +150,21 @@ describe('summarize · 需要人管的三类', () => {
     expect(s.awaitingApproval.map((t) => t.id)).toEqual(['a1'])
   })
 
+  it('⚑ failedTasks 只收「agent 且 failed」的 —— 即等用户决定怎么处置的', () => {
+    const outline = [
+      node('f1', null, 0, 'Agent 失败了', { status: 'failed' }),
+      // 已经处置过的（assignee 已转 user）不该再出现在这里
+      node('f2', null, 1, '已处置的', {
+        status: 'skipped',
+        assignee: 'user',
+        assignee_reason: 'agent_failed',
+      }),
+      node('f3', null, 2, '用户自己的失败', { status: 'failed', assignee: 'user' }),
+    ]
+    const r = summarize(outline, [])
+    expect(r.failedTasks.map((t) => t.id)).toEqual(['f1'])
+  })
+
   it('原因枚举和 detail 被原样带出来（不做翻译——翻译在 reasons.ts）', () => {
     expect(s.blockers[0]).toEqual({
       id: 'b1',
@@ -209,6 +224,14 @@ describe('summarize · 真实 mock 数据', () => {
     expect(s.blockers[0].detail).toBe('restaurant_booking')
     // 两个等确认的（酒店单次、接送机二次）
     expect(s.awaitingApproval).toHaveLength(2)
+    // 一个等决定的（购买旅行保险 —— Agent 失败、还没处置）
+    expect(s.failedTasks.map((t) => t.title)).toEqual(['购买旅行保险'])
+  })
+
+  it('⚑ headline 说"待你决定"而不是"失败"（前者是待办，后者只是陈述）', () => {
+    const japan = datasets.find((d) => d.key === 'japan-trip')!
+    const s = summarize(japan.outline, [])
+    expect(s.headline).toContain('待你决定')
   })
 
   it('japan 数据集不是"全部完成"（有 failed/skipped/todo）', () => {

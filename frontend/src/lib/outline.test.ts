@@ -12,7 +12,7 @@
  *   ③ 视图模型 —— displayState 的优先级和那个护栏
  */
 import { describe, expect, it } from 'vitest'
-import { buildTree, displayState, hasBlockingIssue } from './outline'
+import { buildTree, combineStatus, displayState, hasBlockingIssue, rollupStatuses } from './outline'
 import { node } from '../mocks/_helper'
 import { datasets } from '../mocks'
 
@@ -156,6 +156,106 @@ describe('buildTree · 坏数据', () => {
   it('一个根不算多根（边界：1 是正常的）', () => {
     const r = buildTree([node('r', null, 0, '独根')])
     expect(r.issues).toEqual([])
+  })
+})
+
+/* ── 容器状态汇总 ─────────────────────────────────────────── */
+
+describe('combineStatus · 汇总规则', () => {
+  it('有 failed → failed（优先级最高，压过 running）', () => {
+    // 下面的还在跑、上面有一个失败了 —— 显示 running 会让人以为一切正常
+    expect(combineStatus(['running', 'failed', 'done'])).toBe('failed')
+  })
+
+  it('有 running → running', () => {
+    expect(combineStatus(['done', 'running', 'todo'])).toBe('running')
+  })
+
+  it('全部 done 或 skipped → done（skipped 算已了结）', () => {
+    expect(combineStatus(['done', 'skipped', 'done'])).toBe('done')
+  })
+
+  it('全是 todo → todo', () => {
+    expect(combineStatus(['todo', 'todo'])).toBe('todo')
+  })
+
+  it('部分了结 + 部分未开工 → running（进行中）', () => {
+    expect(combineStatus(['done', 'todo'])).toBe('running')
+  })
+
+  it('空数组 → todo（不崩）', () => {
+    expect(combineStatus([])).toBe('todo')
+  })
+})
+
+describe('rollupStatuses · 容器状态派生', () => {
+  it('叶子用自己存储的状态，容器用汇总值', () => {
+    const built = buildTree([
+      node('root', null, 0, '根', { status: 'running' }), // 存的是 running
+      node('a', 'root', 0, '甲', { status: 'done' }),
+      node('b', 'root', 1, '乙', { status: 'done' }),
+    ])
+    const rolled = rollupStatuses(built.roots)
+    expect(rolled.get('a')).toBe('done')
+    expect(rolled.get('b')).toBe('done')
+    // ⚑ 根存的是 running，但两个子节点都完成了 → 派生为 done
+    expect(rolled.get('root')).toBe('done')
+  })
+
+  it('⚑ 根节点的完成标准：所有后代都是 done / skipped 才算完成', () => {
+    const mk = (childStatus: 'done' | 'todo' | 'failed' | 'skipped') =>
+      buildTree([
+        node('root', null, 0, '根'),
+        node('mid', 'root', 0, '中间层'),
+        node('leaf', 'mid', 0, '叶子', { status: childStatus }),
+      ])
+    expect(rollupStatuses(mk('done').roots).get('root')).toBe('done')
+    expect(rollupStatuses(mk('skipped').roots).get('root')).toBe('done')
+    // 只要有一件没办 / 还在办 / 失败了没人管，根就不是已完成
+    expect(rollupStatuses(mk('todo').roots).get('root')).not.toBe('done')
+    expect(rollupStatuses(mk('failed').roots).get('root')).toBe('failed')
+  })
+
+  it('多层嵌套自底向上汇总', () => {
+    const built = buildTree([
+      node('root', null, 0, '根'),
+      node('mid1', 'root', 0, '分支一'),
+      node('mid2', 'root', 1, '分支二'),
+      node('l1', 'mid1', 0, '叶子一', { status: 'done' }),
+      node('l2', 'mid2', 0, '叶子二', { status: 'todo' }),
+    ])
+    const rolled = rollupStatuses(built.roots)
+    expect(rolled.get('mid1')).toBe('done')
+    expect(rolled.get('mid2')).toBe('todo')
+    // 一个分支完成、一个还没开工 → 根是进行中
+    expect(rolled.get('root')).toBe('running')
+  })
+
+  it('深层的 failed 会一路上传到根', () => {
+    const built = buildTree([
+      node('root', null, 0, '根'),
+      node('mid', 'root', 0, '中间层'),
+      node('leaf', 'mid', 0, '叶子', { status: 'failed' }),
+    ])
+    const rolled = rollupStatuses(built.roots)
+    expect(rolled.get('mid')).toBe('failed')
+    expect(rolled.get('root')).toBe('failed')
+  })
+
+  it('多根各算各的', () => {
+    const built = buildTree([
+      node('r1', null, 0, '根一'),
+      node('r2', null, 1, '根二'),
+      node('a', 'r1', 0, '甲', { status: 'done' }),
+      node('b', 'r2', 0, '乙', { status: 'failed' }),
+    ])
+    const rolled = rollupStatuses(built.roots)
+    expect(rolled.get('r1')).toBe('done')
+    expect(rolled.get('r2')).toBe('failed')
+  })
+
+  it('空输入不崩', () => {
+    expect(rollupStatuses([]).size).toBe(0)
   })
 })
 

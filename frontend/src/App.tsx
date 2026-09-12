@@ -24,12 +24,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { TaskGraph } from './features/canvas/TaskGraph'
 import { ChatPanel } from './features/chat/ChatPanel'
-import { buildTree } from './lib/outline'
+import { buildTree, rollupStatuses } from './lib/outline'
 import {
   advance,
   approve,
   approveAll,
   completeNode,
+  handleFailure,
   markUserTasksDone,
   rejectNode,
   type ExecutionPlan,
@@ -92,11 +93,27 @@ export default function App() {
     return () => clearTimeout(id)
   }, [phase, outline, plan])
 
-  /* ── 派生：结构 → 问题 → 汇报 ───────────────────────────── */
+  /* ── 派生：结构 → 汇总状态 → 汇报 ─────────────────────────
+   *
+   * ⚑ 容器节点（有子节点的分组）【不是可执行任务】，调度器不会推进它们
+   *   （见 simulation.ts 的 containers 判断）。所以它们的状态必须从子节点
+   *   【派生】出来，否则会永远停在初始值 —— 「准备七日游」就会一直显示"进行中"。
+   *
+   *   派生而不是存下来：存下来会漂移（父说 done 而子任务还没做完），
+   *   派生永远不会不一致，因为它是算出来的。
+   */
   const built = useMemo(() => buildTree(outline), [outline])
+  const rolled = useMemo(() => rollupStatuses(built.roots), [built.roots])
+
+  /** 展示用的节点：容器用汇总值，叶子用原值。**不改 outline 本身。** */
+  const viewOutline = useMemo(
+    () => outline.map((n) => (rolled.has(n.id) ? { ...n, status: rolled.get(n.id)! } : n)),
+    [outline, rolled],
+  )
+
   const summary = useMemo(
-    () => (outline.length > 0 ? summarize(outline, built.issues) : null),
-    [outline, built.issues],
+    () => (viewOutline.length > 0 ? summarize(viewOutline, built.issues) : null),
+    [viewOutline, built.issues],
   )
 
   /* ── 动作 ───────────────────────────────────────────────── */
@@ -140,7 +157,11 @@ export default function App() {
         ? approve(outline, nodeId)
         : action === 'reject'
           ? rejectNode(outline, nodeId)
-          : completeNode(outline, nodeId)
+          : action === 'handle'
+            ? handleFailure(outline, nodeId, 'handle')
+            : action === 'discard'
+              ? handleFailure(outline, nodeId, 'discard')
+              : completeNode(outline, nodeId)
     applyUserAction(next)
   }
 
@@ -173,7 +194,8 @@ export default function App() {
         />
       </aside>
 
-      <TaskGraph outline={outline} onNodeAction={handleNodeAction} />
+      {/* 传 viewOutline（容器状态已汇总），而不是原始 outline */}
+      <TaskGraph outline={viewOutline} onNodeAction={handleNodeAction} />
     </div>
   )
 }

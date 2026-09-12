@@ -45,8 +45,22 @@ export const DEFAULT_ADVANCE: AdvanceOptions = {
   completePerTick: 1,
 }
 
-/** 状态列表里表示"这条依赖线已经废了"的取值 */
-const DEAD_STATUSES: NodeStatus[] = ['failed', 'skipped']
+/**
+ * 只有【已被放弃的】上游才会级联跳过下游。
+ *
+ * ⚠️ 这里【故意不含 `'failed'`】—— 这是对 §5.2「依赖任务失败 → 下游 skipped」
+ *    的一处收紧，理由：
+ *
+ *    `failed` 意味着"**还没被决定**"—— 用户可能选择「我来处理」。
+ *    此时就级联跳过下游，等于**提前替用户放弃了**下游，
+ *    而且这个放弃是不可逆的（下游已经变成 skipped）。
+ *
+ *    所以正确的顺序是：上游 failed → 下游【等着】→ 用户决定不处理
+ *    → 上游变 skipped → **这时**才级联。
+ *
+ *    ——仍然遵守"遇到需要判断的地方让人决定，不要替人猜"这条原则。
+ */
+const ABANDONED_STATUSES: NodeStatus[] = ['skipped']
 
 export function advance(
   outline: OutlineNode[],
@@ -117,15 +131,15 @@ export function advance(
     changed = true
   }
 
-  /* ── 阶段 3：依赖废掉的 ──▶ skipped（级联） ─────────────── */
+  /* ── 阶段 3：上游被放弃的 ──▶ skipped（级联） ───────────── */
   for (const n of next) {
     if (n.status !== 'todo') continue
     if (n.assignee !== 'agent') continue
-    const blockedByDeadDep = n.depends_on.some((d) => {
+    const abandoned = n.depends_on.some((d) => {
       const dep = byId.get(d)
-      return dep ? DEAD_STATUSES.includes(dep.status) : false
+      return dep ? ABANDONED_STATUSES.includes(dep.status) : false
     })
-    if (blockedByDeadDep) {
+    if (abandoned) {
       n.status = 'skipped'
       changed = true
     }
@@ -146,10 +160,55 @@ function fallbackOutcome(n: OutlineNode): ExecutionOutcome {
 /* ── 用户侧的动作 ─────────────────────────────────────────── */
 
 /**
- * 用户能对【单个节点】做的三种操作。
+ * 用户能对【单个节点】做的操作。
  * 对话框里的待办列表和画布的详情面板共用这一套 —— 两处入口，同一个语义。
+ *
+ *   approve    批准一个待确认的节点（§9.2）
+ *   reject     否决它（§5.2 的 rejected 转移）
+ *   complete   标记已完成（只对 user / blocked 开放）
+ *   handle     ← 失败任务的两种处置，见 handleFailure()
+ *   discard    ←
  */
-export type NodeAction = 'approve' | 'reject' | 'complete'
+export type NodeAction = 'approve' | 'reject' | 'complete' | 'handle' | 'discard'
+
+/**
+ * 用户对【失败任务】的处置 —— §5.2 失败降级表的人工分支。
+ *
+ *   'handle'   我来处理  →  assignee=user, status=todo
+ *   'discard'  不处理    →  assignee=user, status=skipped
+ *
+ * ⚑ 为什么失败之后要【等人决定】，而不是自动降级：
+ *
+ *   §5.2 的降级表规定了「参数错误 → 转 user」「无可用工具 → blocked」，
+ *   但**"重试也失败之后呢"文档没写** —— 这是个真缺口。
+ *
+ *   停下来让用户决定是唯一诚实的做法：**系统不该替用户判断
+ *   "这件事还值不值得做"**。这和"并发冲突一律 409 不合并"是同一条原则 ——
+ *   **遇到需要判断的地方，让人决定，不要替人猜。**
+ *
+ * ⚠️ 'discard' 产生的 skipped 是【有意放弃】，所以它算"已了结" ——
+ *   父容器可以因此判为完成（见 outline.ts 的 combineStatus）。
+ *   这正是为什么自动级联的 skipped 只能来自已被放弃的上游，
+ *   不能来自还没决定的 failed。
+ */
+export function handleFailure(
+  outline: OutlineNode[],
+  nodeId: string,
+  decision: 'handle' | 'discard',
+): OutlineNode[] {
+  return outline.map((n) => {
+    if (n.id !== nodeId) return n
+    // 只对「Agent 失败了、且还没被处置」的节点生效（幂等）
+    if (n.status !== 'failed' || n.assignee !== 'agent') return n
+
+    return {
+      ...n,
+      assignee: 'user' as const,
+      assignee_reason: 'agent_failed' as const,
+      status: decision === 'handle' ? ('todo' as const) : ('skipped' as const),
+    }
+  })
+}
 
 /**
  * 批准一个待确认的节点（§9.2 的审批流）。

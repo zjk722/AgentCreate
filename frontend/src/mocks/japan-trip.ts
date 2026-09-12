@@ -103,12 +103,20 @@ export const japanTrip: OutlineNode[] = [
     approval: { level: 'confirm', status: 'rejected' },
   }),
 
+  // ⚑ Agent 失败了，【还没被处置】—— 等用户决定「我来处理」还是「不处理」。
+  //   注意它保持 assignee=agent：`failed` 是一个待决定的中间态（§5.2 的降级表
+  //   规定了失败后要转 user 或 blocked，但"重试也失败之后呢"文档没写）。
   node('b20000000025', 'b20000000002', 4, '购买旅行保险', {
     status: 'failed',
   }),
 
+  // ⚑ 依赖保险 —— 这一条把两个状态串成了因果：
+  //   它在初始状态是 `todo`，因为上游只是 failed、**还没被决定**。
+  //   等你在对话区点「不处理」，上游变 skipped，**这时它才会级联跳过**。
+  //   （早期版本这里直接写死 skipped 且没有依赖 —— 那是【讲不通】的数据。）
   node('b20000000026', 'b20000000002', 5, '打印行程单', {
-    status: 'skipped',
+    status: 'todo',
+    depends_on: ['b20000000025'],
   }),
 
   // 🔴 二次确认 + RAG 溯源：不可逆操作（接送机一旦确认就扣款）
