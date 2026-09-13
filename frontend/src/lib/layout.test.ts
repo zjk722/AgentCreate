@@ -6,8 +6,9 @@
  *   而 D5 加上缩放/平移之后，肉眼更不可靠。
  */
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_LAYOUT, layout, type LayoutOptions } from './layout'
+import { DEFAULT_LAYOUT, dependencyPairs, layout, type LayoutOptions } from './layout'
 import { buildTree } from './outline'
+import { datasets } from '../mocks'
 import { node } from '../mocks/_helper'
 import type { OutlineNode } from '../types/outline'
 
@@ -228,5 +229,147 @@ describe('layout · 默认参数', () => {
   it('节点盒子够大，能容下 12 字标题（§7.2 的 E_TITLE_TOO_LONG 上限）', () => {
     // 12 个中文字按 14px 字号约 168px 宽，加上内边距 —— 默认宽度必须 ≥ 这个数
     expect(DEFAULT_LAYOUT.nodeWidth).toBeGreaterThanOrEqual(168)
+  })
+})
+
+/* ── 依赖连线 ─────────────────────────────────────────────── */
+
+/**
+ * ⚑ 这些测试守的是那件事：**`depends_on` 和 `parent_id` 是两张不同的图**。
+ *
+ *   拖拽只改 `parent_id` / `order`，执行顺序由 `depends_on` 决定（§5.2）。
+ *   如果哪天有人"顺手"把依赖线的数据源改成层级树，这些测试会红 ——
+ *   而那个改动的后果是：图看起来正常，但显示的"顺序"是假的。
+ */
+describe('dependencyPairs', () => {
+  /** 从扁平数组一步到位拿到依赖连线 */
+  function deps(flat: OutlineNode[], opts = OPTS) {
+    const positioned = layout(buildTree(flat).roots, opts)
+    return { pairs: dependencyPairs(flat, positioned.nodes), positioned }
+  }
+
+  it('没有 depends_on 时，一条线都不画', () => {
+    expect(deps([node('r', null, 0, '根'), node('a', 'r', 0, '甲')]).pairs).toEqual([])
+  })
+
+  it('⚑ 依赖关系【横跨树枝】也能连上 —— 这正是层级树表达不了的东西', () => {
+    // 甲一 挂在 甲 下面，乙一 挂在 乙 下面，两者是"表亲"。
+    // 依赖图可以不管这个，直接把它们连起来。
+    const flat = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '甲'),
+      node('b', 'r', 1, '乙'),
+      node('a1', 'a', 0, '甲一'),
+      node('b1', 'b', 0, '乙一', { depends_on: ['a1'] }),
+    ]
+    const { pairs } = deps(flat)
+    expect(pairs).toHaveLength(1)
+    expect(pairs[0].from.id).toBe('a1')
+    expect(pairs[0].to.id).toBe('b1')
+  })
+
+  it('方向是【先做的 → 要等的】（箭头指向要等的那一方）', () => {
+    // 支付.depends_on = ['下订单']  →  画成 下订单 ──▶ 支付
+    const flat = [
+      node('r', null, 0, '根'),
+      node('order', 'r', 0, '下订单'),
+      node('pay', 'r', 1, '支付', { depends_on: ['order'] }),
+    ]
+    const { pairs } = deps(flat)
+    expect(pairs[0].from.data.title).toBe('下订单')
+    expect(pairs[0].to.data.title).toBe('支付')
+  })
+
+  it('一个节点依赖多个 → 画出多条', () => {
+    const flat = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '甲'),
+      node('b', 'r', 1, '乙'),
+      node('c', 'r', 2, '丙', { depends_on: ['a', 'b'] }),
+    ]
+    expect(deps(flat).pairs).toHaveLength(2)
+  })
+
+  it('⚑ 依赖指向不存在的节点时不崩，只是那条画不出来', () => {
+    // ⚠️ 这是【已知缺口】：§7.2 没有为"依赖悬空"定义 issue code，
+    //    所以界面上报不出来。而 simulation.ts 里找不到的 id 会求值成 false，
+    //    于是那个任务会永远静静等着。这里只保证不崩。
+    const flat = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '甲', { depends_on: ['根本没这个节点', 'r'] }),
+    ]
+    const { pairs } = deps(flat)
+    expect(pairs).toHaveLength(1)
+    expect(pairs[0].from.id).toBe('r')
+  })
+
+  it('⚑ japan 数据集：3 条依赖全部连上（目标 id 都存在）', () => {
+    const japan = datasets.find((d) => d.key === 'japan-trip')!
+    const { pairs } = deps(japan.outline, DEFAULT_LAYOUT)
+    // 两条指向「决定出行日期」，一条指向「购买旅行保险」
+    expect(pairs).toHaveLength(3)
+    expect(pairs.filter((p) => p.from.data.title === '决定出行日期')).toHaveLength(2)
+    expect(pairs.filter((p) => p.from.data.title === '购买旅行保险')).toHaveLength(1)
+  })
+
+  it('⚑ 每条依赖的两个端点都有真实坐标（否则线会画到 NaN 上去）', () => {
+    const japan = datasets.find((d) => d.key === 'japan-trip')!
+    const { pairs } = deps(japan.outline, DEFAULT_LAYOUT)
+    for (const p of pairs) {
+      expect(Number.isFinite(p.from.x) && Number.isFinite(p.from.y)).toBe(true)
+      expect(Number.isFinite(p.to.x) && Number.isFinite(p.to.y)).toBe(true)
+    }
+  })
+
+  it('所有 mock 数据集上都不崩', () => {
+    for (const d of datasets) {
+      expect(() => deps(d.outline, DEFAULT_LAYOUT), `数据集 ${d.key} 崩了`).not.toThrow()
+    }
+  })
+
+  /* ── 要不要绕道 ──────────────────────────────────────────
+   *
+   * ⚑ 这一段是实测抓出来的：依赖经常连的是【同一列的兄弟】，
+   *   而中间可能还夹着别的卡片。直线会从那张卡片身上穿过去 ——
+   *   而"拱一下"最多只能拱半个卡片宽（84px），绕不开。
+   *   所以这种情况得标记成绕道，改走卡片左边的空隙。
+   */
+  it('⚑ 同列且中间夹着别的卡片 → 要绕道', () => {
+    const flat = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '甲'),
+      node('a1', 'a', 0, '甲一'),
+      node('a2', 'a', 1, '甲二'), // ← 夹在中间
+      node('a3', 'a', 2, '甲三', { depends_on: ['a1'] }),
+    ]
+    expect(deps(flat).pairs[0].detour).toBe(true)
+  })
+
+  it('中间没有东西 → 直连就够，不用绕', () => {
+    const flat = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '甲'),
+      node('a1', 'a', 0, '甲一'),
+      node('a2', 'a', 1, '甲二', { depends_on: ['a1'] }),
+    ]
+    expect(deps(flat).pairs[0].detour).toBe(false)
+  })
+
+  it('不同列 → 不绕道（斜着走过去，本来也不会压住正中间）', () => {
+    const flat = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '甲'),
+      node('a1', 'a', 0, '甲一', { depends_on: ['r'] }),
+    ]
+    expect(deps(flat).pairs[0].detour).toBe(false)
+  })
+
+  it('⚑ japan 数据集：3 条里正好 2 条要绕道 —— 和实测的穿卡结果一致', () => {
+    const japan = datasets.find((d) => d.key === 'japan-trip')!
+    const { pairs } = deps(japan.outline, DEFAULT_LAYOUT)
+    const detours = pairs
+      .filter((p) => p.detour)
+      .map((p) => `${p.from.data.title}→${p.to.data.title}`)
+    expect(detours).toEqual(['决定出行日期→预订大阪酒店', '决定出行日期→预订京都民宿'])
   })
 })

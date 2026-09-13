@@ -185,6 +185,18 @@ body,
   animation-delay: var(--enter-delay, 0ms);
 }
 
+/* 依赖线（虚线 + 箭头）。
+ *
+ * ⚠️ 它【不能】用父子线那套"描线生长"动画，原因很实在：
+ *   描线动画的做法就是去改 stroke-dasharray / stroke-dashoffset，
+ *   而"虚线"这件事本身也是靠 stroke-dasharray 画出来的 ——
+ *   同一个属性要同时干两件事，会打架。
+ *   所以依赖线只做淡入，不做生长。 */
+.dep-edge-enter {
+  animation: edge-fade-in 320ms ease-out backwards;
+  animation-delay: var(--enter-delay, 0ms);
+}
+
 /* ── 降级：用户在系统里开了"减弱动效"────────────────────────
  *
  * 有些人（前庭功能比较敏感的）看到东西移动、放大缩小会头晕难受，
@@ -203,7 +215,8 @@ body,
        这里改的是 animation-delay 本身，不会被内联样式盖掉。 */
     animation-delay: 0ms;
   }
-  .edge-enter {
+  .edge-enter,
+  .dep-edge-enter {
     animation: edge-fade-in 200ms ease-out backwards;
     animation-delay: 0ms;
   }

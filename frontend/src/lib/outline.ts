@@ -199,7 +199,113 @@ export function buildTree(outline: OutlineNode[]): BuildResult {
     })
   }
 
+  /* ── 第 6 步：依赖图校验（§7.2 的第 ③ 组）─────────────
+   * ⚠️ 这里查的是【另一张图】——`depends_on`，不是 parent_id。
+   *    两张图用的算法完全不同，所以拆成独立一步，不要混进上面几步里。 */
+  validateDependencies(byId, issues)
+
   return { roots, detached, issues }
+}
+
+/**
+ * 依赖图校验（§7.2 第 ③ 组）—— 检查 `depends_on`。
+ *
+ * ⚑ 为什么它和层级校验是两套算法：
+ *   `parent_id` 是**单指针**（一个节点只有一个爸爸），往上走一条线就够了；
+ *   `depends_on` 是**任意有向图**（一个节点可以依赖任意多个），必须用 DFS。
+ *   文档 §7.2 特意把 code 拆成两组，就是这个原因。
+ *
+ * ⚑ 为什么非查不可 —— 这两个错误都会让调度器【静默】停住：
+ *
+ *   `E_DANGLING_DEP`  依赖指向不存在的 id 时，simulation.ts 里那句
+ *                     `byId.get(d)?.status === 'done'` 会求值成 **false**，
+ *                     于是这个任务永远等着 —— 而界面上它就是一个普普通通的
+ *                     「待办」，看不出任何异常。
+ *   `E_CYCLE_DEP`     环上的任务互相等对方先做完，谁都不会先跑。
+ *
+ *   **"静默失灵"正是这个项目最不能接受的失败方式**（§7.2 的处置原则）。
+ *
+ * ⚠️ 校验范围是【全部节点】，包括挂不上主树的游离节点 ——
+ *    依赖图跟层级树能不能连通没有关系，一个孤儿照样可以有依赖。
+ */
+function validateDependencies(byId: Map<NodeId, OutlineNode>, issues: StructureIssue[]): void {
+  /* ── ① 悬空依赖 ─────────────────────────────────────────
+   * 每个悬空的引用各报一条，挂在【依赖方】身上 ——
+   * 因为"是谁在等"才是用户要处理的那个节点。 */
+  for (const n of byId.values()) {
+    for (const dep of n.depends_on) {
+      if (!byId.has(dep)) {
+        issues.push({
+          severity: 'error',
+          node_id: n.id,
+          code: 'E_DANGLING_DEP',
+          message: `depends_on 里的 "${dep}" 不存在 —— 这个任务会永远等下去`,
+        })
+      }
+    }
+  }
+
+  /* ── ② 依赖环 ───────────────────────────────────────────
+   *
+   * DFS 三色标记：
+   *
+   *     白(0)  还没走过
+   *     灰(1)  正在【当前这条路上】
+   *     黑(2)  走完了，从它出发确认没有环
+   *
+   * ⚑ 判断成环的依据是那条【从灰指向灰的边】：走到一个"还在路上"的节点，
+   *   说明绕回来了。
+   *
+   *   ⚠️ 为什么不能只用两色（走过 / 没走过）：
+   *      那样会把【菱形结构】误判成环 ——
+   *      「两条不同的路通向同一个节点」是完全正常的依赖结构
+   *      （比如"订机票"和"订酒店"都依赖"决定日期"），不是环。
+   *      只有"回到正在路上的节点"才是环。
+   *
+   * 复杂度 O(V+E)，规模 20–200 节点（§4.3）绰绰有余。
+   * 递归深度 = 最长依赖链，200 以内不会爆栈。 */
+  const GRAY = 1
+  const BLACK = 2
+  const color = new Map<NodeId, number>()
+  const path: NodeId[] = []
+  /** 已经报过的节点。一个节点可能同时身处两个环里，报一次就够 */
+  const reported = new Set<NodeId>()
+
+  const visit = (id: NodeId): void => {
+    const n = byId.get(id)
+    if (!n) return // 悬空依赖，上面已经报过了
+
+    color.set(id, GRAY)
+    path.push(id)
+
+    for (const dep of n.depends_on) {
+      const c = color.get(dep) ?? 0
+
+      if (c === GRAY) {
+        // 环上的【每个】节点各报一条 —— 和 E_CYCLE_PARENT 一致，
+        // 因为 §7.1 的 issue 带 node_id，UI 要逐节点挂角标。
+        for (const member of path.slice(path.indexOf(dep))) {
+          if (reported.has(member)) continue
+          reported.add(member)
+          issues.push({
+            severity: 'error',
+            node_id: member,
+            code: 'E_CYCLE_DEP',
+            message: '沿 depends_on 走回到了自己，该节点处于依赖环中',
+          })
+        }
+      } else if (c !== BLACK) {
+        visit(dep)
+      }
+    }
+
+    path.pop()
+    color.set(id, BLACK)
+  }
+
+  for (const id of byId.keys()) {
+    if ((color.get(id) ?? 0) === 0) visit(id)
+  }
 }
 
 /* ── 容器节点的状态汇总 ───────────────────────────────────── */

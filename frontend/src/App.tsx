@@ -24,7 +24,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { TaskGraph } from './features/canvas/TaskGraph'
 import { ChatPanel } from './features/chat/ChatPanel'
-import { buildTree, rollupStatuses } from './lib/outline'
+import { buildTree, hasBlockingIssue, rollupStatuses } from './lib/outline'
+import { deleteNode, moveNode, type DeleteMode, type DropPosition } from './lib/outlineEdit'
 import {
   advance,
   approve,
@@ -116,19 +117,62 @@ export default function App() {
     [viewOutline, built.issues],
   )
 
+  /**
+   * §7.1 的那道闸门。
+   *
+   * ⚑ 这是全项目【唯一】真的会拦住东西的地方 —— 在这之前，
+   *   `hasBlockingIssue()` 只被 summary.ts 用来算汇报的语气，
+   *   没有任何地方拿它挡过什么。
+   *
+   *   **"报出来了"和"拦住了"是两回事。** 只说不动，就是 #13 的另一种面目：
+   *   顶上弹着"7 个错误（阻断）"，右下角的「确认并开始执行」却照样能点。
+   */
+  const blocked = hasBlockingIssue(built.issues)
+
   /* ── 动作 ───────────────────────────────────────────────── */
 
-  function submit(text: string) {
-    const g = text.trim()
-    if (!g) return
-    setGoal(g)
+  /**
+   * 开始规划一份新的图。两个入口共用这一条。
+   */
+  function startPlanning(goal: string, d: MockDataset) {
+    setGoal(goal)
     setInput('')
-    setDataset(pickDataset(g))
+    setDataset(d)
     setOutline([]) // 规划期间右栏先空着，避免闪一下旧数据
     setPhase('planning')
   }
 
+  /** 用户在输入框里打了目标 —— 得按文字去猜是哪份数据 */
+  function submit(text: string) {
+    const g = text.trim()
+    if (!g) return
+    startPlanning(g, pickDataset(g))
+  }
+
+  /**
+   * 用户直接点了数据集快捷按钮。
+   *
+   * ⚑ 这里**不走文本匹配** —— 按钮本来就知道要哪一份，把它转成文字
+   *   再匹配回来是绕远路，而且会引入"转过去又匹配错了"的 bug。
+   *
+   *   原来就是这么坏的：坏数据样本的 goal 是空的，按钮转成 key 之后
+   *   匹配不上，pickDataset 静默回退到第一份 ——
+   *   **点「坏数据样本」，出来的是日本旅游，而且不会告诉你选错了。**
+   */
+  function pick(d: MockDataset) {
+    startPlanning(d.goal || d.label, d)
+  }
+
+  /**
+   * 用户点了「确认并开始执行」。
+   *
+   * ⚑ 这里的 `blocked` 判断是【第二道】，不是多余的：
+   *   第一道是按钮本身不给点（隐藏了），但闸门不能只活在界面里 ——
+   *   "按钮藏起来"是提示，"函数自己拒绝"才是保证。
+   *   只靠界面的话，将来多一个入口（快捷键、自动确认、测试代码）就漏了。
+   */
   function confirm() {
+    if (blocked) return
     setPhase('executing')
   }
 
@@ -165,6 +209,48 @@ export default function App() {
     applyUserAction(next)
   }
 
+  /**
+   * 拖动节点改结构（改层级 / 改顺序）。
+   *
+   * ⚑ 这里是 §5.3「前端串行保存队列」将来要接的地方。现在是本地 mock，
+   *   改完直接生效；接上 A6 之后这一次调用要带上 `revision` 提交，
+   *   服务端不匹配就回 409，再由前端提示「图已被修改」让用户重做。
+   *   文档特意说了**不做合并** —— 合并是在猜用户意图（§5.3）。
+   *
+   * ⚠️ 注意这里算的是原始 `outline`，而画布拿到的是 `viewOutline`
+   *   （容器状态已汇总）。两者结构完全一样，只有 `status` 不同，
+   *   而 moveNode 只读 `parent_id` / `order` —— 所以两边结果一致。
+   */
+  function handleMove(draggedId: string, targetId: string, position: DropPosition) {
+    const r = moveNode(outline, draggedId, targetId, position)
+    // 被拒（成环 / 会造出第二个根 / 原地不动）就当没拖过。
+    // ⚠️ 正常操作被拒不是错误，所以这里不弹任何提示 ——
+    //    拖拽过程中本来就不会高亮出不合法的地方，用户根本走不到这一步。
+    if (!r.ok) return
+    setOutline(r.outline)
+  }
+
+  /**
+   * 删掉一个节点。
+   *
+   * ⚑ 真正的工作量在 `deleteNode` 里，而且**不在"把它从数组里拿掉"**：
+   *
+   *     ① 清理引用 —— 别人 `depends_on` 里写着它的，得跟着删掉。
+   *        不清理就立刻造出 E_DANGLING_DEP：那些任务永远等着，
+   *        而界面上它们只是普普通通的「待办」。
+   *     ② 兄弟组重编号 —— 抽走一个会留下 order 空洞。
+   *
+   *   这两件事的共同点是：**不做的话，用户什么都没干、图上却多出一个错。**
+   *
+   * ⚠️ 影响已经由 DetailPanel 的确认块摆给用户看过了（删几个、谁的依赖会断），
+   *   所以这里不再重复判断 —— 界面上的确认就是那个"提案"。
+   */
+  function handleDelete(nodeId: string, mode: DeleteMode) {
+    const r = deleteNode(outline, nodeId, mode)
+    if (!r.ok) return
+    setOutline(r.outline)
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-100 text-slate-900">
       <aside className="flex w-[380px] shrink-0 flex-col border-r border-slate-200 bg-white">
@@ -177,7 +263,10 @@ export default function App() {
           goal={goal}
           planning={phase === 'planning'}
           summary={summary}
-          canConfirm={phase === 'proposed'}
+          // ⚑ 有阻断性问题时不给确认 —— 见上面 `blocked` 的说明。
+          //   汇报的 headline 会同时说"有 N 个阻断性问题，需要先处理才能继续"，
+          //   所以按钮消失不是"没反应"，是有人解释过为什么。
+          canConfirm={phase === 'proposed' && !blocked}
           onConfirm={confirm}
           onApproveAll={() => applyUserAction(approveAll(outline))}
           onMarkUserDone={() => applyUserAction(markUserTasksDone(outline))}
@@ -190,12 +279,21 @@ export default function App() {
           onInput={setInput}
           onSubmit={() => submit(input)}
           activeKey={dataset?.key ?? null}
-          onPick={(d) => submit(d.goal || d.key)}
+          onPick={pick}
         />
       </aside>
 
       {/* 传 viewOutline（容器状态已汇总），而不是原始 outline */}
-      <TaskGraph outline={viewOutline} onNodeAction={handleNodeAction} />
+      <TaskGraph
+        outline={viewOutline}
+        onNodeAction={handleNodeAction}
+        onMove={handleMove}
+        onDelete={handleDelete}
+        // ⚑ §5.3：执行中禁止结构性编辑 —— 调度器正在按 order 决定"下一步该谁"，
+        //   这会儿改结构会让它跟图上对不上。拖拽和详情面板的「调整位置」
+        //   共用这一个闸门，不会出现"拖不了但能用下拉框改"的漏洞。
+        dragEnabled={phase !== 'executing'}
+      />
     </div>
   )
 }
@@ -217,8 +315,10 @@ function Composer({
 }) {
   return (
     <div className="border-t border-slate-200">
-      {/* 数据集快捷入口 —— 用于快速 review 不同形态的图，不必先猜对关键词 */}
-      <div className="flex gap-1 overflow-x-auto px-3 pt-2.5 pb-0">
+      {/* 数据集快捷入口 —— 用于快速 review 不同形态的图，不必先猜对关键词。
+          ⚑ 显示的是 short 的 label，不是 goal 原文 ——
+            goal 动辄十几个字，四个并排会把这一行挤成横向滚动条。 */}
+      <div className="flex flex-wrap gap-1 px-3 pt-2.5 pb-0">
         {datasets.map((d) => (
           <button
             key={d.key}
@@ -230,9 +330,12 @@ function Composer({
               d.key === activeKey
                 ? 'bg-slate-900 text-white'
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+              // 坏数据样本单独标个红边 —— 它和另外三份不是一类东西，
+              // 混在一排里点错了会以为"这产品怎么这么容易崩"
+              d.key === 'corrupt-sample' ? 'ring-1 ring-red-300' : '',
             ].join(' ')}
           >
-            {d.goal || d.key}
+            {d.label}
           </button>
         ))}
       </div>

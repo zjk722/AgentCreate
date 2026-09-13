@@ -85,7 +85,19 @@ export function AgentMessage({
        * 这里只保留"一次处理多条"的快捷方式，且仅在确实多于一条时才出现 ——
        * 只有一条时它是冗余的，会让人以为两种操作有什么不同。 */}
       <footer className="flex flex-wrap gap-1.5 border-t border-slate-100 px-3 py-2.5">
-        {canConfirm && (
+        {/* ⚑ 两个条件，第二个是 §7.1 的闸门：
+              · canConfirm            —— 方案已经出了，轮到用户决定
+              · verdict !== 'blocked' —— 有 error 级 issue 时【不许往下走】
+
+            ⚠️ 为什么这道判断要放在这里，而不是只写在调用方：
+            「有阻断就别开始」是条**规则**，规则不能只活在某个 JSX 表达式里 ——
+            那样只要换个地方渲染这张卡片，闸门就没了，而且没有任何测试会红。
+            放在卡片自己身上，谁拿到它谁就被挡住。
+
+            ⚠️ 而且"不给按钮"必须配上"说明为什么"：headline 里那句
+              「有 N 个阻断性问题，需要先处理才能继续」就是那个说明。
+              按钮凭空消失而不解释，用户只会以为程序坏了（#13）。 */}
+        {canConfirm && summary.verdict !== 'blocked' && (
           <Action onClick={onConfirm} primary>
             确认并开始执行
           </Action>

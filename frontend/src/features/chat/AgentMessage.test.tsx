@@ -7,8 +7,9 @@
  */
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { buildTree } from '../../lib/outline'
 import { summarize } from '../../lib/summary'
-import type { OutlineNode } from '../../types/outline'
+import type { OutlineNode, StructureIssue } from '../../types/outline'
 import { node } from '../../mocks/_helper'
 import { datasets } from '../../mocks'
 import { AgentMessage } from './AgentMessage'
@@ -29,12 +30,12 @@ function strip(html: string): string {
 
 function render(
   outline: OutlineNode[],
-  opts: { canConfirm?: boolean } = {},
+  opts: { canConfirm?: boolean; issues?: StructureIssue[] } = {},
 ): string {
   return strip(
     renderToString(
       <AgentMessage
-        summary={summarize(outline, [])}
+        summary={summarize(outline, opts.issues ?? [])}
         canConfirm={opts.canConfirm ?? false}
         onConfirm={noop}
         onApproveAll={noop}
@@ -103,6 +104,33 @@ describe('AgentMessage · 按钮的条件出现', () => {
     const outline = [node('a', null, 0, '甲', { status: 'todo' })]
     expect(render(outline, { canConfirm: true })).toContain('确认并开始执行')
     expect(render(outline, { canConfirm: false })).not.toContain('确认并开始执行')
+  })
+
+  it('⚑⚑ 有【阻断性问题】时不给确认 —— §7.1 那道唯一的闸门', () => {
+    // ⚑ 这条守的是全项目唯一一处"真的会拦住东西"的地方。
+    //   在它之前，hasBlockingIssue() 只被用来算汇报的语气，
+    //   顶上弹着"7 个错误（阻断）"、底下的「确认并开始执行」照样能点。
+    //   **"报出来了"和"拦住了"是两回事。**
+    const corrupt = datasets.find((d) => d.key === 'corrupt-sample')!
+    const issues = buildTree(corrupt.outline).issues
+
+    // 方案已出（canConfirm=true），但图是坏的
+    const html = render(corrupt.outline, { canConfirm: true, issues })
+
+    expect(html).not.toContain('确认并开始执行')
+    // ⚠️ 而且必须【说明为什么】—— 按钮凭空消失而不解释，
+    //   用户只会以为程序坏了。这正是 #13 要防的。
+    expect(html).toContain('阻断性问题')
+  })
+
+  it('⚑ 只有警告不算阻断 —— order 不连续不该拦住执行', () => {
+    // §7.1：error 阻断，warning 放行。把这条也钉住，
+    // 免得哪天有人图省事改成"有 issue 就拦"，那会把一堆正常流程卡死。
+    const outline = [node('r', null, 0, '根'), node('a', 'r', 0, '甲'), node('b', 'r', 2, '乙')]
+    const warnOnly: StructureIssue[] = [
+      { severity: 'warning', node_id: 'r', code: 'W_ORDER_INVALID', message: 'order 不对' },
+    ]
+    expect(render(outline, { canConfirm: true, issues: warnOnly })).toContain('确认并开始执行')
   })
 
   it('只有一条时不出批量按钮（冗余，且会让人以为两种操作不同）', () => {

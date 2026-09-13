@@ -166,3 +166,93 @@ export function layout(
     height: cursorY - ROOT_GAP + opts.padding,
   }
 }
+
+/* ── 依赖连线 ─────────────────────────────────────────────── */
+
+/**
+ * 从 `depends_on` 算出要画的依赖连线。
+ *
+ * ⚑ 为什么必须画出来（这是这个函数存在的全部理由）：
+ *
+ *   节点上有**两个互不相干的轴**（§4.2）：
+ *
+ *     `parent_id` + `order`  →  图长什么样（归到哪一类、排第几个）
+ *     `depends_on`           →  谁**必须**排在谁前面
+ *
+ *   而拖拽只改前者。于是会出现这种情况：用户把「支付」拖到「下订单」上面，
+ *   看上去顺序变了 —— **但执行顺序一点没变**，调度器只看 `depends_on`
+ *   （§5.2 的拓扑排序）。
+ *
+ *   **图在骗人。** 而这张图是用户判断"Agent 会不会做错"的唯一依据。
+ *
+ *   把 `depends_on` 画出来之后，两件事就分开了：
+ *   位置是位置，线才是顺序。用户一眼能看出「支付」确实连着「下订单」。
+ */
+export interface DependencyPair {
+  from: PositionedNode
+  to: PositionedNode
+  /**
+   * 这条线得【绕道】吗？
+   *
+   * ⚑ 为什么需要它：依赖经常连的是**同一列的兄弟节点**（深度相同 → x 相同），
+   *   而这两个节点中间可能还夹着别的卡片。
+   *   直线（或稍微拱一下的弧线）都会**从中间那张卡片身上穿过去** ——
+   *   而拱最多只能拱半个卡片宽（84px），不够绕开。
+   *   所以这种情况得改走卡片左边那条空隙（层与层之间天然留着的走廊）。
+   */
+  detour: boolean
+}
+
+export function dependencyPairs(outline: OutlineNode[], nodes: PositionedNode[]): DependencyPair[] {
+  const byId = new Map(nodes.map((p) => [p.id, p]))
+  const pairs: DependencyPair[] = []
+
+  for (const n of outline) {
+    const to = byId.get(n.id)
+    if (!to) continue
+
+    for (const depId of n.depends_on) {
+      const from = byId.get(depId)
+
+      // 依赖指向一个不存在的节点时画不出来（它没有坐标），只能跳过。
+      //
+      // ⚑ 跳过是安全的，因为这件事**已经被报出来了** ——
+      //   buildTree() 的第 6 步会为它报一条 E_DANGLING_DEP（§7.2 第 ③ 组），
+      //   页面顶上的问题提示条会把那个节点直接指给用户看。
+      //
+      //   ⚠️ 换言之：这里可以静默跳过，**只是因为上游已经不再静默了**。
+      //      当初这个 continue 是唯一的处置方式 —— 那条依赖就这么消失，
+      //      而依赖它的任务会永远等着，界面上一点异常都不显示。
+      if (!from) continue
+
+      pairs.push({ from, to, detour: needsDetour(from, to, nodes) })
+    }
+  }
+
+  return pairs
+}
+
+/**
+ * 这两个节点之间夹着别的卡片吗？
+ *
+ * ⚑ 用 `depth` 判断"是不是同一列"，而不是比 x 坐标 —— 深度相同就一定同列，
+ *   比浮点数相等可靠，读起来也更直接。
+ *
+ * 只有同列才需要判断：不同列的话，直线本来就会斜着穿过去，
+ * 而那种情况绕道也绕不明白，不如让它斜着走（斜线穿卡的观感比"穿过正中间"好得多）。
+ */
+function needsDetour(from: PositionedNode, to: PositionedNode, nodes: PositionedNode[]): boolean {
+  if (from.depth !== to.depth) return false
+
+  const lo = Math.min(from.y, to.y)
+  const hi = Math.max(from.y, to.y)
+
+  return nodes.some(
+    (n) =>
+      n.depth === from.depth &&
+      n.id !== from.id &&
+      n.id !== to.id &&
+      n.y > lo &&
+      n.y < hi,
+  )
+}

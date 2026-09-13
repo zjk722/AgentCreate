@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest'
 import { buildTree, combineStatus, displayState, hasBlockingIssue, rollupStatuses } from './outline'
 import { node } from '../mocks/_helper'
 import { datasets } from '../mocks'
+import type { OutlineNode } from '../types/outline'
 
 /* ── ① 正常路径 ───────────────────────────────────────────── */
 
@@ -156,6 +157,143 @@ describe('buildTree · 坏数据', () => {
   it('一个根不算多根（边界：1 是正常的）', () => {
     const r = buildTree([node('r', null, 0, '独根')])
     expect(r.issues).toEqual([])
+  })
+})
+
+/* ── ② 依赖图校验（§7.2 的第 ③ 组）────────────────────────── */
+
+/**
+ * ⚑ 为什么这一组值得单独测：
+ *
+ *   这两个错误都会让调度器【静默】停住 —— 不报错、不崩溃、控制台干净，
+ *   只是某个任务永远不动了。而界面上它看起来就是个普普通通的「待办」。
+ *
+ *   **静默失灵是这一行里最难查的 bug。** 所以校验的边界必须钉死。
+ *
+ * ⚑ 还要注意它和上一组用的是【完全不同的算法】：
+ *   层级树是单指针（往上走一条线），依赖图是任意有向图（必须 DFS 三色）。
+ *   下面的"菱形不是环"一条，测的就是三色标记里那个【灰】到底有没有用。
+ */
+describe('buildTree · 依赖图校验', () => {
+  const codesOf = (outline: OutlineNode[], code: string) =>
+    buildTree(outline).issues.filter((i) => i.code === code)
+
+  it('依赖指向不存在的节点 → E_DANGLING_DEP', () => {
+    const issues = codesOf(
+      [node('r', null, 0, '根'), node('a', 'r', 0, '甲', { depends_on: ['没这个'] })],
+      'E_DANGLING_DEP',
+    )
+    expect(issues).toHaveLength(1)
+    // ⚑ 挂在【依赖方】身上 —— "是谁在等"才是用户要处理的那个节点
+    expect(issues[0].node_id).toBe('a')
+    expect(issues[0].severity).toBe('error')
+  })
+
+  it('多个悬空引用各报一条', () => {
+    const outline = [node('r', null, 0, '根'), node('a', 'r', 0, '甲', { depends_on: ['x', 'y'] })]
+    expect(codesOf(outline, 'E_DANGLING_DEP')).toHaveLength(2)
+  })
+
+  it('正常的依赖链不报错', () => {
+    const outline = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '甲'),
+      node('b', 'r', 1, '乙', { depends_on: ['a'] }),
+      node('c', 'r', 2, '丙', { depends_on: ['b'] }),
+    ]
+    expect(buildTree(outline).issues).toEqual([])
+  })
+
+  it('自依赖也要抓（一个节点的环也是环）', () => {
+    const outline = [node('r', null, 0, '根'), node('a', 'r', 0, '甲', { depends_on: ['a'] })]
+    const issues = codesOf(outline, 'E_CYCLE_DEP')
+    expect(issues).toHaveLength(1)
+    expect(issues[0].node_id).toBe('a')
+  })
+
+  it('两个互相依赖 → 两边各报一条', () => {
+    const outline = [
+      node('r', null, 0, '根'),
+      node('p', 'r', 0, 'P', { depends_on: ['q'] }),
+      node('q', 'r', 1, 'Q', { depends_on: ['p'] }),
+    ]
+    expect(codesOf(outline, 'E_CYCLE_DEP').map((i) => i.node_id).sort()).toEqual(['p', 'q'])
+  })
+
+  it('三个成环 → 环上三个节点各报一条', () => {
+    const outline = [
+      node('r', null, 0, '根'),
+      node('x', 'r', 0, 'X', { depends_on: ['y'] }),
+      node('y', 'r', 1, 'Y', { depends_on: ['z'] }),
+      node('z', 'r', 2, 'Z', { depends_on: ['x'] }),
+    ]
+    expect(codesOf(outline, 'E_CYCLE_DEP').map((i) => i.node_id).sort()).toEqual(['x', 'y', 'z'])
+  })
+
+  it('⚑⚑ 菱形【不是】环 —— 两条路通向同一个节点是正常的', () => {
+    //      决定日期
+    //       ├── 订机票 ──┐
+    //       └── 订酒店 ──┴─→ 出发
+    const outline = [
+      node('r', null, 0, '根'),
+      node('date', 'r', 0, '决定日期'),
+      node('fly', 'r', 1, '订机票', { depends_on: ['date'] }),
+      node('hotel', 'r', 2, '订酒店', { depends_on: ['date'] }),
+      node('go', 'r', 3, '出发', { depends_on: ['fly', 'hotel'] }),
+    ]
+
+    // ⚠️ 这条守的是三色标记里那个【灰】到底有没有用。
+    //    只用"走过 / 没走过"两色的话：
+    //      走到 出发 → 订机票 → 决定日期 之后，决定日期就"走过了"；
+    //      再走 出发 → 订酒店 → 决定日期，会撞上"走过了"，**被误判成环**。
+    //    真相是：决定日期走完了（黑），不是还在路上（灰）。
+    //    这种"两个前置条件汇合"的结构在任何真实任务图里都遍地都是 ——
+    //    误判的话整个产品就废了。
+    expect(buildTree(outline).issues).toEqual([])
+  })
+
+  it('⚑ 同一个节点身处两个环里时只报一次（不刷屏）', () => {
+    const outline = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, 'A', { depends_on: ['b'] }),
+      node('b', 'r', 1, 'B', { depends_on: ['a', 'c'] }), // A⇄B 一个环，B⇄C 又一个
+      node('c', 'r', 2, 'C', { depends_on: ['b'] }),
+    ]
+    const ids = codesOf(outline, 'E_CYCLE_DEP').map((i) => i.node_id)
+    expect(new Set(ids)).toEqual(new Set(['a', 'b', 'c']))
+    // B 在两个环里，但只该报一次 —— 报三遍只是噪声，用户不会因此更明白
+    expect(ids).toHaveLength(3)
+  })
+
+  it('⚑ 游离节点上的依赖照样校验（依赖图和层级树连不连通无关）', () => {
+    const outline = [
+      node('r', null, 0, '根'),
+      node('lost', '没人', 0, '孤儿', { depends_on: ['也没人'] }),
+    ]
+    expect(buildTree(outline).issues.map((i) => i.code).sort()).toEqual([
+      'E_DANGLING_DEP',
+      'E_ORPHAN_PARENT',
+    ])
+  })
+
+  it('⚑ 依赖成环会真的【拦住】整张图，不只是记一笔', () => {
+    // hasBlockingIssue() 是 §7.1 说的唯一闸门。
+    // 校验出来了却拦不住，等于没校验 —— 所以这条测的是"后果"，不是"有没有报"。
+    const outline = [
+      node('r', null, 0, '根'),
+      node('p', 'r', 0, 'P', { depends_on: ['q'] }),
+      node('q', 'r', 1, 'Q', { depends_on: ['p'] }),
+    ]
+    expect(hasBlockingIssue(buildTree(outline).issues)).toBe(true)
+  })
+
+  it('只有警告（order 不连续）时不算阻断', () => {
+    const outline = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '甲'),
+      node('b', 'r', 2, '乙'),
+    ]
+    expect(hasBlockingIssue(buildTree(outline).issues)).toBe(false)
   })
 })
 
@@ -315,7 +453,7 @@ describe('mock 数据集自身必须是干净的', () => {
   const clean = datasets.filter((d) => d.key !== 'corrupt-sample')
 
   for (const d of clean) {
-    it(`「${d.goal || d.key}」无 error 级 issue`, () => {
+    it(`「${d.label}」无 error 级 issue`, () => {
       const r = buildTree(d.outline)
       const errors = r.issues.filter((i) => i.severity === 'error')
       expect(errors, JSON.stringify(errors, null, 2)).toEqual([])
@@ -330,11 +468,40 @@ describe('mock 数据集自身必须是干净的', () => {
     expect(mood.outline).toHaveLength(1)
   })
 
-  it('坏数据样本确实触发了全部 4 类问题（否则它就是份没用的样本）', () => {
+  it('坏数据样本确实触发了【全部 6 类】问题（否则它就是份没用的样本）', () => {
     const corrupt = datasets.find((d) => d.key === 'corrupt-sample')!
     const codes = new Set(buildTree(corrupt.outline).issues.map((i) => i.code))
     expect(codes).toEqual(
-      new Set(['E_DUPLICATE_ID', 'E_ORPHAN_PARENT', 'E_CYCLE_PARENT', 'W_ORDER_INVALID']),
+      new Set([
+        // §7.2 第 ② 组：层级树
+        'E_DUPLICATE_ID',
+        'E_ORPHAN_PARENT',
+        'E_CYCLE_PARENT',
+        'W_ORDER_INVALID',
+        // §7.2 第 ③ 组：依赖图
+        'E_DANGLING_DEP',
+        'E_CYCLE_DEP',
+      ]),
     )
+  })
+
+  it('⚑ 样本文件头部那份【计数】说明也是准的（不然它会悄悄过时）', () => {
+    // corrupt-sample.ts 顶上写着详细清单（1 重复 + 1 孤儿 + 2 环 + 1 order
+    // + 1 悬空 + 2 依赖环）。那份说明是给人读的，没有东西守着它就会过时 ——
+    // 而这个项目的立场是"文档与代码冲突时以文档为准"，说明写错了比不写还糟。
+    const corrupt = datasets.find((d) => d.key === 'corrupt-sample')!
+    const counts = buildTree(corrupt.outline).issues.reduce<Record<string, number>>((acc, i) => {
+      acc[i.code] = (acc[i.code] ?? 0) + 1
+      return acc
+    }, {})
+
+    expect(counts).toEqual({
+      E_DUPLICATE_ID: 1,
+      E_ORPHAN_PARENT: 1,
+      E_CYCLE_PARENT: 2,
+      W_ORDER_INVALID: 1,
+      E_DANGLING_DEP: 1,
+      E_CYCLE_DEP: 2,
+    })
   })
 })
