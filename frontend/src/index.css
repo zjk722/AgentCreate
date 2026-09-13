@@ -72,3 +72,157 @@ body,
   height: 100%;
   margin: 0;
 }
+
+/* ─────────────────────────────────────────────────────────────
+ * 任务图"长出来"的入场动画
+ *
+ * 【要解决的问题】
+ * 以前规划一结束，14 个节点「唰」一下全冒出来，像凭空变出来的。
+ * 现在改成一层一层往外长：先出根节点，再出它拆出来的第一层，
+ * 再出第二层……看着像图被"画"出来，而不是被"贴"上去。
+ *
+ * 为什么按【第几层】错开，而不是按第 1 个、第 2 个、第 3 个节点错开？
+ *   因为一层就等于 Agent 的一次思考，同层的东西是这一次思考的产出。
+ *   按序号错开的话，同一层的东西会被拆开成好几段，
+ *   本来整整齐齐的层级就被搅成一串乱冒的气泡了。
+ *
+ * 【三条不能写错的规矩】
+ *
+ *   ① 只让东西"移动"或"变淡"，绝对不要去改它的"位置坐标"。
+ *      节点在页面上的位置，是用 left / top 两个坐标钉死的。
+ *      动画如果去改这两个数字，浏览器每一帧都得重新算一遍
+ *      "现在谁站在哪儿、谁挡着谁"（这活儿叫【重排】），
+ *      十几个节点一起动就会明显卡顿。
+ *      改用 transform（移动）和 opacity（透明度）就不会有这个问题 ——
+ *      这两样只是把已经画好的图"挪一下、调个透明度"，
+ *      不需要重新算位置，可以甩给显卡去干，几乎不花时间。
+ *
+ *   ② 元素【平时就长成最终的样子】，动画只负责让它"从别处飘进来"。
+ *      反过来写是常见错误：让元素平时是透明的，靠动画把它"变出来"。
+ *      一旦动画没能生效（用户系统里开了"减弱动效"，或者浏览器太老），
+ *      元素就会【永远看不见】。
+ *      按现在这样写，最坏的结果只是"没有动画"，内容一定看得见。
+ *
+ *   ③ 排队等待的那段时间，得保持"还没出场"的样子，不然会先闪一下。
+ *      这就是下面要写 fill-mode: backwards 的原因 ——
+ *      等待期间停在起始态（透明），动画放完回到平时态（就位、不透明）。
+ *
+ * ⚠️ 为什么等待时间走 --enter-delay 这个自定义属性，
+ *    而不是直接写 animation-delay：
+ *   因为下面的"减弱动效"降级要把等待时间清零，也就是要改写
+ *   animation-delay。但【写在标签上的内联样式，优先级比样式表里
+ *   任何规则都高】—— 直接内联写 animation-delay 的话，
+ *   降级规则会被它盖掉，等待时间根本清不掉。
+ *   换成自定义属性之后，降级规则改的是 animation-delay 本身，
+ *   内联的那个 --enter-delay 只是被晾在一边没人读，两边互不打架。
+ * ───────────────────────────────────────────────────────────── */
+
+/* 起始态：往【左】偏 10px（也就是朝着父节点的方向）+ 稍微小一点。
+   往左是有讲究的 —— 这个图是左右铺开的，爸爸在左边，
+   所以"从左边滑进来"看起来就像是从爸爸身上长出来的。
+   统一写成"从下面浮起来"就不对了，因为在这个布局里，
+   下面这个方向不代表任何意思。 */
+@keyframes node-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-10px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+/* 根节点没有爸爸，所以不往任何方向偏 —— 只做"由小变大 + 淡入" */
+@keyframes node-enter-root {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 连线是一点点"画"出来的，不是一下子全出现。
+ *
+ * 【原理】想象有人拿笔描这条线：dashoffset 就是"我把虚线的起点
+ *   往后挪多远"。挪满一整条线的长度时，看到的就是空白；
+ *   挪 0 时，整条线都在。于是从"挪满"变到"挪 0"，就等于在描线。
+ *
+ * ⚠️ 线的长度已经由 SVG 上的 pathLength={1} 归一化成了 1，
+ *    所以这里可以直接写 1 和 0，不用去问"这条线到底有多长"。 */
+@keyframes edge-enter {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.node-enter,
+.node-enter-root {
+  animation-duration: 320ms;
+  /* 快到头的时候慢下来，不是从头到尾一个速度。
+     匀速看着像机器在跑，减速看着才像东西"落"到位了。 */
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: backwards;
+  animation-delay: var(--enter-delay, 0ms);
+}
+.node-enter {
+  animation-name: node-enter;
+}
+.node-enter-root {
+  animation-name: node-enter-root;
+}
+
+.edge-enter {
+  /* 比节点短一点（240 对 320）：线先到位，节点再落上去。
+     反过来的话，会看到卡片悬在一根还没连到它的线前面。 */
+  animation: edge-enter 240ms ease-out backwards;
+  animation-delay: var(--enter-delay, 0ms);
+}
+
+/* ── 降级：用户在系统里开了"减弱动效"────────────────────────
+ *
+ * 有些人（前庭功能比较敏感的）看到东西移动、放大缩小会头晕难受，
+ * 所以操作系统给了个开关，让 App 别做这类动作。
+ *
+ * ⚠️ 注意这里【没有降成"完全不动"】—— 那等于白做。
+ *    改成只保留淡入：去掉移动、去掉缩放、去掉等待，
+ *    "不是凭空出现"这件事在最严格的设置下依然成立。 */
+@media (prefers-reduced-motion: reduce) {
+  .node-enter,
+  .node-enter-root {
+    animation-name: node-fade-in;
+    animation-duration: 200ms;
+    animation-timing-function: ease-out;
+    /* 清零。因为等待时间是内联自定义属性给的，
+       这里改的是 animation-delay 本身，不会被内联样式盖掉。 */
+    animation-delay: 0ms;
+  }
+  .edge-enter {
+    animation: edge-fade-in 200ms ease-out backwards;
+    animation-delay: 0ms;
+  }
+}
+
+@keyframes node-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes edge-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

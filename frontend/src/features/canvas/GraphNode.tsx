@@ -12,12 +12,14 @@
  * ⚑ 背景色只被【审批】占用：待确认/被否决时染成琥珀/紫，
  *   其余恒为白。这样背景、边框色、边框线型、图标形状是四条互不打架的通道。
  */
+import type { CSSProperties } from 'react'
 import type { LayoutOptions, PositionedNode } from '../../lib/layout'
 import { displayState } from '../../lib/outline'
 import { EvidenceIcon, LockIcon, StatusIcon } from './StatusIcon'
 import {
   ASSIGNEE_BORDER_STYLE,
   ASSIGNEE_LABEL,
+  ENTER_STAGGER_MS,
   STATUS_BORDER,
   STATUS_LABEL,
   STATUS_SOFT_BG,
@@ -41,6 +43,11 @@ export function GraphNode({
   const chip = approvalChip(n.approval)
   const hasEvidence = Boolean(n.evidence)
 
+  // 入场：根节点（第 0 层）没有爸爸，所以不往哪个方向偏，只做淡入 + 放大；
+  // 其余的从左滑进来。第几层就等几个 90ms —— 于是整张图是一层层长出来的。
+  // ⚠️ 动画的完整说明（为什么只能动 transform、怎么降级）在 index.css 里。
+  const isRoot = p.depth === 0
+
   // 背景只表达审批状态，不表达生命周期
   const background =
     state === 'awaiting_confirmation'
@@ -60,17 +67,26 @@ export function GraphNode({
         'absolute flex flex-col justify-center gap-1 rounded-lg border-2 px-2.5 text-left',
         'transition-shadow duration-150 hover:shadow-md',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-1',
+        // 入场动画。根节点用另一套 keyframes（不位移），所以这里要分两种
+        isRoot ? 'node-enter-root' : 'node-enter',
         STATUS_BORDER[n.status],
         ASSIGNEE_BORDER_STYLE[n.assignee],
         background,
         selected ? 'shadow-md ring-2 ring-slate-900 ring-offset-1' : 'shadow-sm',
       ].join(' ')}
-      style={{
-        left: p.x - opts.nodeWidth / 2,
-        top: p.y - opts.nodeHeight / 2,
-        width: opts.nodeWidth,
-        height: opts.nodeHeight,
-      }}
+      style={
+        {
+          left: p.x - opts.nodeWidth / 2,
+          top: p.y - opts.nodeHeight / 2,
+          width: opts.nodeWidth,
+          height: opts.nodeHeight,
+          // 等待时间由"第几层"算出来，只能走内联样式。
+          // ⚠️ 用自定义属性而不是 animation-delay —— 因为"减弱动效"降级
+          //    要靠改写 animation-delay 来清零，而内联样式优先级更高会盖掉它。
+          //    详见 index.css 里的说明。
+          '--enter-delay': `${p.depth * ENTER_STAGGER_MS}ms`,
+        } as CSSProperties
+      }
       // 屏幕阅读器需要一句话说清这张卡片是什么
       aria-label={`${n.title}，${STATUS_LABEL[n.status]}，${ASSIGNEE_LABEL[n.assignee]}${
         chip ? `，${chip.label}` : ''

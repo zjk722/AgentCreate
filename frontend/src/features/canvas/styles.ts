@@ -86,6 +86,23 @@ export interface ApprovalChip {
  * 审批的"需二次确认"和执行的"失败"是完全不同的两件事，
  * 都用红色会让人以为节点执行出错了。
  */
+/* ── 入场动画的节奏 ───────────────────────────────────────── */
+
+/**
+ * 每深一层，晚多久出场（毫秒）。
+ *
+ * 一层 = Agent 的一次思考。所以"层与层之间隔一会儿"读起来是
+ * 「想一步 → 出一批 → 再想一步 → 再出一批」。
+ *
+ * ⚠️ 90ms 这个数：太短（比如 20ms）看着还是一坨一起冒出来，
+ *    太长（比如 300ms）等得人心焦，四层就要等一秒多。
+ *
+ * ⚑ 这里只放【等待时间】。动画本身演多久、怎么演、以及
+ *   "减弱动效"怎么降级，都在 index.css 里 —— 只有等待时间
+ *   需要参与计算（第几层 × 90ms），所以只有它必须住在 JS 这边。
+ */
+export const ENTER_STAGGER_MS = 90
+
 export function approvalChip(approval: Approval | null | undefined): ApprovalChip | null {
   if (!approval) return null
 
