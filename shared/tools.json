@@ -1,0 +1,66 @@
+[
+  {
+    "name": "flight_search",
+    "description": "查询航班的价格与班次，只读，不会订票。何时用：想知道往返或单程机票多少钱、有哪些航班、飞多久。何时别用：要查酒店用 hotel_search；要查汇率用 fx_rate。",
+    "input_schema": null,
+    "side_effect": "read_only",
+    "idempotency": "natural",
+    "timeout_ms": 10000
+  },
+  {
+    "name": "fx_rate",
+    "description": "查询两种货币之间的汇率，只读，不会换钱。何时用：只需要知道当前牌价，或者把一笔金额换算成另一种货币。何时别用：真的要动钱去兑换时用 currency_exchange —— 那个会产生实际的钱款变动。",
+    "input_schema": null,
+    "side_effect": "read_only",
+    "idempotency": "natural",
+    "timeout_ms": 5000
+  },
+  {
+    "name": "hotel_search",
+    "description": "查询指定城市的酒店与房价，只读，不会预订。何时用：需要比较酒店的位置、价格、还有没有房。何时别用：只问机票价格时用 flight_search；已经确定要订下某一间时用 hotel_booking。",
+    "input_schema": null,
+    "side_effect": "read_only",
+    "idempotency": "natural",
+    "timeout_ms": 10000
+  },
+  {
+    "name": "knowledge_lookup",
+    "description": "在用户提供的资料里检索相关段落，只读。何时用：目标里附了长文或文档，需要从中找依据、并给节点标注出处。何时别用：没有附带任何资料时不要用它 —— 它检索的是给定的资料，不是模型自己的记忆。凭常识就能回答的知识整理类任务不需要任何工具。",
+    "input_schema": null,
+    "side_effect": "read_only",
+    "idempotency": "natural",
+    "timeout_ms": 15000
+  },
+  {
+    "name": "hotel_booking",
+    "description": "预订酒店房间，会占用库存并预授权房费（一般可免费取消）。何时用：用户已经选定了住哪一家、哪几天、几晚。何时别用：还在比价阶段用 hotel_search。必须是用户已经确认过的酒店与日期，不要替用户挑。",
+    "input_schema": null,
+    "side_effect": "reversible",
+    "idempotency": "keyed",
+    "timeout_ms": 20000
+  },
+  {
+    "name": "currency_exchange",
+    "description": "实际兑换货币，钱款会发生变动。何时用：用户明确要求把一笔钱换成另一种货币。何时别用：只想看汇率或换算金额时用 fx_rate —— 那个只是查一下，这个是真的换。",
+    "input_schema": null,
+    "side_effect": "reversible",
+    "idempotency": "keyed",
+    "timeout_ms": 15000
+  },
+  {
+    "name": "airport_transfer_booking",
+    "description": "预订接送机或包车服务。确认后立即扣款，且不退不改。何时用：用户已经定好航班与到达时间，要安排接送。何时别用：还在查航班时用 flight_search。",
+    "input_schema": null,
+    "side_effect": "irreversible",
+    "idempotency": "keyed",
+    "timeout_ms": 20000
+  },
+  {
+    "name": "insurance_purchase",
+    "description": "购买旅行保险，保费即时扣款。何时用：用户明确要买旅行保险。何时别用：只是询问保险条款或保费多少钱时不要调用。",
+    "input_schema": null,
+    "side_effect": "irreversible",
+    "idempotency": "none",
+    "timeout_ms": 30000
+  }
+]
