@@ -1,0 +1,31 @@
+[project]
+name = "mindmap-agent"
+version = "0.0.1"
+description = "Agent 任务图引擎 · Python 无状态引擎（§3.1 的第三层）"
+requires-python = ">=3.12"
+
+# ⚑ A0 阶段【刻意没有依赖】。
+#
+# A0 的完成标准是一条命令（§12）：目标 → 任务图骨架 + 校验。
+# 而"把模型输出的扁平 level 列表组装成树 + 跑 7 条生成期校验"这件事，
+# 用标准库就写完了 —— 不需要任何第三方库。
+#
+# LangChain / LangGraph（§1.5）等真接上 LLM、RAG、MCP 时再加。
+# 提前装 = 让 A1 的环境复现多背几个用不上的包（uv.lock 是要提交的）。
+dependencies = []
+
+[tool.uv]
+# ⚑ 下面两行都不是可选的。
+#
+# ① package = false
+#    本项目不是要发到 PyPI 的包，没有 build backend。
+#    不写这行，uv 会去找一个 backend 来"安装"本项目自己，然后报错。
+#
+# ② python-preference = "only-system"
+#    uv 默认会去 github 下载它自己管版的 Python
+#    （astral-sh/python-build-standalone，不是 PyPI）。
+#    而这台机器上 github 是【要挂代理才通】的 —— 代理没开时，
+#    uv sync 会卡在一个和本项目毫无关系的网络请求上。
+#    限定只用系统 Python（uv python list 已找到 cpython-3.12.6）即可绕开。
+package = false
+python-preference = "only-system"
