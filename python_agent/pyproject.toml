@@ -4,15 +4,27 @@ version = "0.0.1"
 description = "Agent 任务图引擎 · Python 无状态引擎（§3.1 的第三层）"
 requires-python = ">=3.12"
 
-# ⚑ A0 阶段【刻意没有依赖】。
+# 依赖是【按需长出来的】，不是一次配齐的：
 #
-# A0 的完成标准是一条命令（§12）：目标 → 任务图骨架 + 校验。
-# 而"把模型输出的扁平 level 列表组装成树 + 跑 7 条生成期校验"这件事，
-# 用标准库就写完了 —— 不需要任何第三方库。
+#   骨架阶段是零依赖 —— "flat level 列表组装成树"用标准库就写完了。
+#   接 DeepSeek 时长了两个：
+#     · openai        —— DeepSeek 走 OpenAI 兼容接口，省得自己搓 HTTP/鉴权/超时
+#     · python-dotenv —— 见下面「为什么需要它」
 #
-# LangChain / LangGraph（§1.5）等真接上 LLM、RAG、MCP 时再加。
+# LangChain / LangGraph（§1.5）等到 A3/A4 真用上再加。
 # 提前装 = 让 A1 的环境复现多背几个用不上的包（uv.lock 是要提交的）。
-dependencies = []
+dependencies = [
+    "openai>=3.14.0",
+    "python-dotenv>=1.2.3",
+]
+
+# ⚑ 为什么需要 python-dotenv：**实测过 `uv run` 不会自动读 `.env`**
+#   （往 .env 里放一个变量，`uv run python -c "import os;print(os.environ.get(...))"` 读到 None）。
+#
+#   替代方案是在 Makefile 里写 `uv run --env-file .env`，但那会造成两条入口行为不一致：
+#   `make plan` 读了 .env，而手动 `uv run python -m app.cli` 调试时不读 ——
+#   "换个方式跑就得到不同结果"正是这个项目最烦的坑。
+#   所以把加载放进代码（cli.py 里 load_dotenv()），两条入口都一样。
 
 [tool.uv]
 # ⚑ 下面两行都不是可选的。
@@ -29,3 +41,15 @@ dependencies = []
 #    限定只用系统 Python（uv python list 已找到 cpython-3.12.6）即可绕开。
 package = false
 python-preference = "only-system"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+# 让 tests/ 里能直接 `import app...`。
+# 不写这行，pytest 默认只把 tests/ 目录塞进 sys.path（它按"最靠近的没有 __init__.py 的父目录"算），
+# 于是 import app 会失败 —— 而报错信息看起来像"模块不存在"，很费时间。
+pythonpath = ["."]
+testpaths = ["tests"]

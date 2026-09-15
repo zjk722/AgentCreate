@@ -7,13 +7,27 @@
 #
 # 用法：
 #     make plan GOAL="准备一次日本关西七日游"
+#     make test
 
 GOAL ?= 准备一次日本关西七日游
 
-.PHONY: help plan
+.PHONY: help plan prompt test
 
 help:
-	@echo 'make plan GOAL="..."   目标 → 任务图骨架（当前是占位数据，会自报家门）'
+	@echo 'make plan GOAL="..."   目标 → 任务图骨架（调真模型；Prompt 没写会明确报错）'
+	@echo 'make prompt GOAL="..." 只打印【将要发出去】的内容，不调模型（零成本）'
+	@echo 'make test               Python 侧的测试'
+
+# ⚑ PYTHONIOENCODING=utf-8 不是装饰：Windows 控制台的默认代码页不是 UTF-8，
+#   不设它的话 pytest 报告里的中文会变成乱码 —— 而**失败时最需要读的正是那几行**。
+#   （cli.py 里也单独 reconfigure 过一次 stdout，两者是不同层面的保险。）
 
 plan:
-	@cd python_agent && uv run python -m app.cli --goal "$(GOAL)"
+	@cd python_agent && PYTHONIOENCODING=utf-8 uv run python -m app.cli --goal "$(GOAL)"
+
+# 改 Prompt 时的回路：不用 key、不花钱，先把要发出去的东西看一遍。
+prompt:
+	@cd python_agent && PYTHONIOENCODING=utf-8 uv run python -m app.cli --goal "$(GOAL)" --dry-run
+
+test:
+	@cd python_agent && PYTHONIOENCODING=utf-8 uv run pytest -q
