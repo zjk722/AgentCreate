@@ -18,9 +18,6 @@
 
 import argparse
 import sys
-from pathlib import Path
-
-from dotenv import load_dotenv
 
 from app.llm.client import PlanCallError
 from app.llm.prompts import PromptNotWritten, build_messages
@@ -28,11 +25,8 @@ from app.planner.outline import LevelSkipError
 from app.tools.registry import load_tools
 from app.workflows.plan import PlanResult, plan_goal
 
-# .env 放在 python_agent/ 下（和 pyproject.toml 同级）。
-# ⚑ 为什么在代码里读、而不是在 Makefile 里加 `uv run --env-file`：
-#    那样 `make plan` 会读 .env，而手动 `uv run python -m app.cli` 调试时不读 ——
-#    两条入口行为不一致，是这个项目最烦的坑。详见 pyproject.toml 里的说明。
-ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+# ⚑ `.env` 的加载**已经挪到 `app/llm/client.py`** —— 挂在"用 key 的地方"，
+#   而不是挂在某一个调用方身上。理由写在那边（一句话：否则别的入口都得自己记得加载一次）。
 
 
 def _children(nodes: list[dict], parent_id: str | None) -> list[dict]:
@@ -165,8 +159,6 @@ def main() -> int:
     #   （开发这个仓库时实测过）。显式改掉，免得每次都在这里浪费一轮排查。
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-
-    load_dotenv(ENV_FILE)
 
     parser = argparse.ArgumentParser(description="目标 → 任务图骨架（§5.1 的 ① 规划）")
     parser.add_argument("--goal", required=True, help="用户的自然语言目标")

@@ -19,12 +19,29 @@
 import json
 import os
 import time
+from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from openai import OpenAI
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-chat"  # ⚑ 默认值，以官方文档为准；可用 DEEPSEEK_MODEL 覆盖
+
+# `.env` 放在 python_agent/ 下（和 pyproject.toml 同级）。
+#
+# ⚑ 为什么在【这里】读，而不是在 cli.py 里读（2026-09-16 改过来的）：
+#
+#   原来它在 cli.py —— 于是"读 .env"这件事挂在了【某一个调用方】身上，
+#   而不是挂在【用 key 的地方】。任何别的入口（将来的 FastAPI、evals 的 runner、
+#   一个临时脚本）都得**自己记得**加一次 `load_dotenv()`，忘了就是"没有 API key"。
+#
+#   ⚠️ 这不是假想：改这个文件的当天，一个临时脚本就忘了，直接跑挂。
+#
+# ⚑ 为什么不改成在 Makefile 里加 `uv run --env-file`：
+#   那样 `make plan` 会读 .env，而手动 `uv run python -m app.cli` 调试时不读 ——
+#   **两条入口行为不一致**，是同一个坑的另一种形态（见 pyproject.toml 的说明）。
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class PlanCallError(RuntimeError):
@@ -32,6 +49,10 @@ class PlanCallError(RuntimeError):
 
 
 def _client() -> OpenAI:
+    # ⚑ 读 key 之前先把 `.env` 读进来。`load_dotenv` 默认**不覆盖**已存在的
+    #   真环境变量 —— 所以显式 `export DEEPSEEK_API_KEY=...` 仍然优先。
+    load_dotenv(ENV_FILE)
+
     key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
     if not key:
         raise PlanCallError(
