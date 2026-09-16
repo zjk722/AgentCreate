@@ -6,14 +6,36 @@
     "limits": { "max_depth": 3, "max_children": 6 },
     "structure": {
       "max_errors": 0,
-      "max_warnings": 0,
-      "node_count": { "min": 3, "max": 30 }
+      "max_warnings": 1,
+      "node_count": { "min": 3, "max": 15 }
     },
     "distribution": {
-      "min_assignees": { "agent": 1, "user": 1 }
+      "agent": { "min": 1 },
+      "user": { "min": 1 }
     },
     "coverage": {
-      "must_contain": ["<关键词1>", "<关键词2>", "<关键词3>"],
+      "must_contain": ["交通", "价格", "美食","景点","天气"],
+      "min_hit_rate": 0.66
+    },
+    "semantics": null,
+    "note": "§8.3 种子 #2。扇出 ≤ 6 → limits.max_children；「含 agent/user 分类」→ distribution。§8.3 没给这条配 judge，所以 semantics 是 null。带 < > 的是占位，等你填。"
+  },
+  {
+    "id": "seed-01",
+    "tier": "green",
+    "goal": "整理一下机器学习的知识体系",
+    "limits": { "max_depth": 5, "max_children": 10 },
+    "structure": {
+      "max_errors": 0,
+      "max_warnings": 1,
+      "node_count": { "min": 150, "max": 300 }
+    },
+    "distribution": {
+      "agent": { "min": 150 },
+      "user": { "max": 0 }
+    },
+    "coverage": {
+      "must_contain": ["数学与统计基础", "数据与特征工程", "学习范式","经典监督学习","无监督与表示学习","集成学习","深度学习","强化学习","模型评估与优化"],
       "min_hit_rate": 0.66
     },
     "semantics": null,
