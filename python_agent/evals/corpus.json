@@ -1,0 +1,22 @@
+[
+  {
+    "id": "seed-02",
+    "tier": "green",
+    "goal": "帮我规划一次日本关西七日游",
+    "limits": { "max_depth": 3, "max_children": 6 },
+    "structure": {
+      "max_errors": 0,
+      "max_warnings": 0,
+      "node_count": { "min": 3, "max": 30 }
+    },
+    "distribution": {
+      "min_assignees": { "agent": 1, "user": 1 }
+    },
+    "coverage": {
+      "must_contain": ["<关键词1>", "<关键词2>", "<关键词3>"],
+      "min_hit_rate": 0.66
+    },
+    "semantics": null,
+    "note": "§8.3 种子 #2。扇出 ≤ 6 → limits.max_children；「含 agent/user 分类」→ distribution。§8.3 没给这条配 judge，所以 semantics 是 null。带 < > 的是占位，等你填。"
+  }
+]
