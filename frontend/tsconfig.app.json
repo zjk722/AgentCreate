@@ -6,6 +6,10 @@
     "module": "esnext",
     "types": ["vite/client"],
     "allowArbitraryExtensions": true,
+    /* ⚑ 为了 `import realPlans from './mocks/real-plans.json'`（真模型跑出来的两份方案）。
+       不加这行，`tsc -b` 会报 TS2732「找不到模块」—— 而 Vite 其实跑得起来，
+       于是变成"构建通过、类型检查却失败"这种最别扭的状态。 */
+    "resolveJsonModule": true,
     "skipLibCheck": true,
 
     /* Bundler mode */

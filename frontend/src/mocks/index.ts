@@ -16,6 +16,7 @@ import type { OutlineNode } from '../types/outline'
 import { corruptSample } from './corrupt-sample'
 import { japanTrip } from './japan-trip'
 import { mlKnowledge } from './ml-knowledge'
+import realPlans from './real-plans.json'
 import { vagueMood } from './vague-mood'
 
 /**
@@ -68,6 +69,30 @@ export interface MockDataset {
   execution?: ExecutionPlan
 }
 
+/**
+ * ⚑ **真模型跑出来的两份方案**（2026-09-16，DeepSeek，按 corpus 里各自的 limits 跑）。
+ *
+ * 它们和上面那几份手写样本**长得一模一样**，但来路完全不同 ——
+ * 所以每份的 `note` 里那两句必须显示出来（`Composer` 现在会把当前数据集那一行显示在界面上）。
+ * 否则你会拿一份"**未经 Policy 裁决、依赖还没算**"的图，当成产品的真实能力。
+ *
+ * 两个需要知道的细节：
+ *
+ *   ① 它们和手写样本**共用同一个 `goal`** —— 所以按文字匹配会命中**前面那个**
+ *      （手写样本）。真跑这两份要点按钮、或输入 key。
+ *      这是**确定的、可解释的**行为，不是"点了没反应"那个 bug
+ *      （那条由 `index.test.ts` 里"每份都能被自己的 key 选中"守着）。
+ *
+ *   ② JSON 里保留着 `proposed_tool`，而前端契约（`types/outline.ts`）里**没有**这个字段
+ *      —— 所以界面不会显示它。留着是因为它是**模型真实输出的一部分**，
+ *      而且 Policy 将来判 `blocked` / 审批等级靠的就是它（§4.2 的那处缺口）。
+ */
+const realDatasets = [realPlans['real-japan'], realPlans['real-ml']] as unknown as MockDataset[]
+// ⚑ 为什么 `as unknown as`：JSON 模块的类型是"推断出来的字面量类型"
+//   （比如 status 推断成 `string`），而 `OutlineNode.status` 是五个值的联合 —— 两边不兼容。
+//   ⚠️ 代价要如实说：**这份 fixture 不被类型检查**（字段名写错、枚举值写错都不会报）。
+//      换来的是它**忠实保留模型的原样输出**（而不是手抄成 TS、抄错也没人知道）。
+
 export const datasets: MockDataset[] = [
   {
     key: 'japan-trip',
@@ -98,6 +123,9 @@ export const datasets: MockDataset[] = [
     note: '⚠️ 非种子 · 坏数据：重复 id / 孤儿 / 环 / order 空洞 / 依赖悬空 / 依赖环',
     outline: corruptSample,
   },
+  // ⚑ 真跑的两份放【最后】：`pickDataset` 的兜底是第一份，而文字匹配撞车时
+  //   也是"前面那份赢" —— 手写样本应该优先（真跑那两份靠按钮或 key 进）。
+  ...realDatasets,
 ]
 
 /**
@@ -123,4 +151,32 @@ export function pickDataset(text: string): MockDataset {
     if (hit) return hit
   }
   return datasets[0]
+}
+
+/**
+ * 还没选数据集时显示的那句话。
+ *
+ * ⚑ 它必须**同样**挡住"把手造样本当成真数据"这个误读 ——
+ *   而按钮那一排在任何时刻摆的都是手造样本，所以这句话在任何时刻都成立。
+ */
+const NO_DATASET_NOTE = '上面这几份都是手造的样本 —— 不是模型跑出来的'
+
+/**
+ * 界面上那一行「这份数据哪来的」该显示什么。
+ *
+ * ⚑ 为什么抽成函数，而不是在 JSX 里直接写 `datasets.find(...)?.note`：
+ *   那样这段逻辑就只活在调用方那行 JSX 里 —— **而那个位置没有测试守着**
+ *   （同一条理由见推送 6：「闸门不能只活在调用方那行 JSX 里」）。
+ *
+ * ⚑ 没选数据集时**不给空串**：那一行会时有时无，布局跟着跳一下；
+ *   而且空着也不诚实 —— 见 NO_DATASET_NOTE 的说明。
+ *
+ * ⚑ `warning` 的判据是「**note 以 `⚠️` 开头**」，这是一条**约定**：
+ *   需要当心看的说明就那么写。它和 `corrupt-sample` 那个红边是同一个目的，
+ *   区别是红边按 key 硬编码（以后加数据集不会自动生效），
+ *   这条按**内容**认（照约定写就自动生效）。
+ */
+export function noteFor(activeKey: string | null): { text: string; warning: boolean } {
+  const text = datasets.find((d) => d.key === activeKey)?.note ?? NO_DATASET_NOTE
+  return { text, warning: text.startsWith('⚠️') }
 }

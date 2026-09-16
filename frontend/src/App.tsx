@@ -38,7 +38,7 @@ import {
   type NodeAction,
 } from './lib/simulation'
 import { summarize } from './lib/summary'
-import { datasets, pickDataset, type MockDataset } from './mocks'
+import { datasets, noteFor, pickDataset, type MockDataset } from './mocks'
 import type { OutlineNode } from './types/outline'
 
 /**
@@ -300,7 +300,12 @@ export default function App() {
 
 /* ── 输入区 ───────────────────────────────────────────────── */
 
-function Composer({
+/**
+ * ⚑ 导出它是为了测试 —— 它是 `App` 的内部零件，原本 import 不到，
+ *   于是"来源说明那一行到底画没画出来"就没有任何东西守着。
+ *   （同一条理由见推送 6：「闸门不能只活在调用方那行 JSX 里」。）
+ */
+export function Composer({
   input,
   onInput,
   onSubmit,
@@ -313,6 +318,8 @@ function Composer({
   activeKey: string | null
   onPick: (d: MockDataset) => void
 }) {
+  const note = noteFor(activeKey)
+
   return (
     <div className="border-t border-slate-200">
       {/* 数据集快捷入口 —— 用于快速 review 不同形态的图，不必先猜对关键词。
@@ -339,6 +346,20 @@ function Composer({
           </button>
         ))}
       </div>
+
+      {/* 当前数据集的来源说明。
+          ⚑ 以前它只挂在按钮的 title 上（浏览器原生悬停提示）—— 而 title 对键盘
+            和触屏等于不存在，所以"免得看成真数据"这个意图实际只兑现了一小半。
+          ⚑ 类名必须是**字面量**：Tailwind 靠扫描源码文本决定生成哪些样式，
+            写 `text-${x}` 这种拼接扫不到 —— 而且不报错，只是颜色静默失效（推送 4 踩过）。 */}
+      <p
+        className={[
+          'px-3 pt-1.5 text-[10px] leading-tight',
+          note.warning ? 'text-red-600' : 'text-slate-500',
+        ].join(' ')}
+      >
+        {note.text}
+      </p>
 
       <form
         className="flex items-end gap-2 p-3"
