@@ -11,12 +11,14 @@
 
 GOAL ?= 准备一次日本关西七日游
 
-.PHONY: help plan prompt test
+.PHONY: help plan prompt test eval
 
 help:
 	@echo 'make plan GOAL="..."   目标 → 任务图骨架（调真模型；Prompt 没写会明确报错）'
 	@echo 'make prompt GOAL="..." 只打印【将要发出去】的内容，不调模型（零成本）'
 	@echo 'make test               Python 侧的测试'
+	@echo 'make eval               A1 评测跑批（会花钱调模型；退化时非零退出码）'
+	@echo 'make eval ARGS="--only seed-03"   只跑一条种子（省 2/3 的调用）'
 
 # ⚑ PYTHONIOENCODING=utf-8 不是装饰：Windows 控制台的默认代码页不是 UTF-8，
 #   不设它的话 pytest 报告里的中文会变成乱码 —— 而**失败时最需要读的正是那几行**。
@@ -31,3 +33,8 @@ prompt:
 
 test:
 	@cd python_agent && PYTHONIOENCODING=utf-8 uv run pytest -q
+
+# A1 的评测跑批。退化时非零退出码（§8.4 的回归门禁）。
+# ⚠️ 基线只在 `ARGS=--update-baseline` 时才更新 —— 否则"退化"永远检测不到。
+eval:
+	@cd python_agent && PYTHONIOENCODING=utf-8 uv run python -m evals.runner $(ARGS)
