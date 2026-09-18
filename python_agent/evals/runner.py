@@ -122,6 +122,20 @@ def judge_distribution(nodes: list[dict[str, Any]], spec: dict[str, Any]) -> str
     return None
 
 
+def coverage_hits(
+    nodes: list[dict[str, Any]], spec: dict[str, Any]
+) -> list[tuple[tuple[str, ...], bool]]:
+    """每个方向（一组同义词）**命中了没有**。
+
+    ⚑ 这是"哪个方向中了"的**唯一实现** —— `judge_coverage` 拿它判通过，
+      报告拿它统计"每个方向 5 次里中了几次"。
+      报告要是自己再判一遍，迟早和判定不一致（"判定说过了、报告说没中"）。
+    """
+    groups = spec.get("must_contain") or []
+    titles = "".join(n["title"] for n in nodes)
+    return [(tuple(g), any(w in titles for w in g)) for g in groups]
+
+
 def judge_coverage(nodes: list[dict[str, Any]], spec: dict[str, Any]) -> str | None:
     """② 覆盖。`must_contain` 里**每一项是一个方向**（一组同义词），命中任一即算这个方向中。
 
@@ -133,19 +147,18 @@ def judge_coverage(nodes: list[dict[str, Any]], spec: dict[str, Any]) -> str | N
     ⚑ 判据是**标题的子串** —— §8.3 说的是「含'监督学习'」；
        不要求"每个概念对应一个独立节点"（那太严，「监督学习基础」也该算中）。
     """
-    groups = spec.get("must_contain") or []
-    if not groups:
+    hits = coverage_hits(nodes, spec)
+    if not hits:
         return None
 
-    titles = "".join(n["title"] for n in nodes)
-    hit = [g for g in groups if any(w in titles for w in g)]
-    rate = len(hit) / len(groups)
+    good = [g for g, ok in hits if ok]
+    rate = len(good) / len(hits)
     floor = spec.get("min_hit_rate", 1.0)
 
     if rate + 1e-9 < floor:
-        missing = ["/".join(g) for g in groups if not any(w in titles for w in g)]
+        missing = ["/".join(g) for g, ok in hits if not ok]
         return (
-            f"方向命中 {len(hit)}/{len(groups)}（{rate:.2f} < {floor}）"
+            f"方向命中 {len(good)}/{len(hits)}（{rate:.2f} < {floor}）"
             f"，缺：{'、'.join(missing)}"
         )
     return None
@@ -162,6 +175,7 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
     passed_cover = 0
     passed_all = 0
     failures: list[str] = []
+    detail: list[dict[str, Any]] = []
 
     for k in range(runs):
         result = plan_goal(
@@ -187,6 +201,20 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
         if why_s is None and why_d is None and why_c is None:
             passed_all += 1
 
+        # ⚑ 每一次的原始数字都留下 —— **通过的也要**。
+        #   调整断言时看的正是这些：节点数的分布、每个方向的命中率。
+        #   只报"哪几次翻车了"的话，你手里就没有"正常时是什么样"。
+        detail.append(
+            {
+                "nodes": len(result.nodes),
+                "hits": [
+                    ok for _, ok in coverage_hits(result.nodes, seed.get("coverage") or {})
+                ],
+                "warns": [i["code"] for i in result.issues if i["severity"] == "warning"],
+                "assignees": Counter(n["assignee"] for n in result.nodes),
+            }
+        )
+
         # ⚑ 失败的那几次要留下**是怎么翻车的** —— 只报"红了"没用（#13 的口味）。
         step = f"第 {k + 1} 次"
         if why_s:
@@ -207,6 +235,9 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
         "cover": passed_cover,
         "passed": passed_all,  # ⚑ 判定用的是这个 —— 见上面那段说明
         "failures": failures,
+        "detail": detail,
+        # 方向的**标签**（五个跑次共用一份），报告里要拿它和每次的命中标志配对
+        "dirs": [tuple(g) for g in (seed.get("coverage") or {}).get("must_contain", [])],
     }
 
 
@@ -236,6 +267,45 @@ def render(
         print(
             f"    结构 {r['struct']}/{runs_per_seed} · 分布 {r['dist']}/{runs_per_seed}"
             f" · 覆盖 {r['cover']}/{runs_per_seed} · {verdict}"
+        )
+
+    # ── 每条的明细（**通过的那几次也在内**）──────────────────────
+    #
+    # ⚑ 为什么通过了也要报：调整断言时看的**正是这些数字** ——
+    #   "节点数该定多少"看的是它的分布，"这个关键词该不该必含"看的是它的命中率。
+    #   只报失败的话，你手里的只有"哪几次翻车了"，没有"正常时是什么样"。
+    print()
+    print("── 每条种子的明细（含通过的那几次）──────────────────────")
+    for r in results:
+        d = r["detail"]
+        if not d:
+            continue
+        print()
+        print(f"{r['id']}：")
+
+        nodes = [x["nodes"] for x in d]
+        print(
+            f"    节点数    {' / '.join(map(str, nodes))}"
+            f"    （中位 {sorted(nodes)[len(nodes) // 2]}）"
+        )
+        for who in ("agent", "user", "blocked"):
+            vals = [x["assignees"].get(who, 0) for x in d]
+            if any(vals):
+                print(f"    {who:<7}   {' / '.join(map(str, vals))}")
+
+        if r["dirs"]:
+            parts = []
+            for i, g in enumerate(r["dirs"]):
+                hit = sum(1 for x in d if x["hits"][i])
+                parts.append(f"{'/'.join(g)} {hit}/{len(d)}")
+            # ⚑ 逐条列出来（不是只报"命中 3/6"）—— 你要调的是**哪几个方向该必含**，
+            #   而那要看**每个方向各自的命中率**：0/5 的和 5/5 的处理方式完全不同。
+            print(f"    方向命中  {' · '.join(parts)}")
+
+        warns = Counter(w for x in d for w in x["warns"])
+        print(
+            f"    warning   "
+            f"{'、'.join(f'{w}×{n}' for w, n in warns.items()) if warns else '（无）'}"
         )
 
     if any(r["failures"] for r in results):
