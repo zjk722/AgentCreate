@@ -11,6 +11,17 @@
 
 GOAL ?= 准备一次日本关西七日游
 
+# ⚑ Windows 控制台的默认代码页不是 UTF-8，不设它的话中文会变成乱码 ——
+#   而**失败时最需要读的正是那几行**。
+#
+# ⚠️ 写成 `export VAR = ...`（make 自己导出），**不要**写成
+#   `VAR=value uv run ...` 那种"变量前缀" —— 那是 **sh 的语法，cmd.exe 不认**。
+#   实测过：从 cmd 里跑 `make eval` 会报
+#       'PYTHONIOENCODING' 不是内部或外部命令
+#   因为 make 在 cmd 下用的是 cmd.exe 当 shell。
+#   `export` 是 make 层的事，**与 shell 无关**，两边都能用。
+export PYTHONIOENCODING = utf-8
+
 .PHONY: help plan prompt test eval
 
 help:
@@ -25,16 +36,16 @@ help:
 #   （cli.py 里也单独 reconfigure 过一次 stdout，两者是不同层面的保险。）
 
 plan:
-	@cd python_agent && PYTHONIOENCODING=utf-8 uv run python -m app.cli --goal "$(GOAL)"
+	@cd python_agent && uv run python -m app.cli --goal "$(GOAL)"
 
 # 改 Prompt 时的回路：不用 key、不花钱，先把要发出去的东西看一遍。
 prompt:
-	@cd python_agent && PYTHONIOENCODING=utf-8 uv run python -m app.cli --goal "$(GOAL)" --dry-run
+	@cd python_agent && uv run python -m app.cli --goal "$(GOAL)" --dry-run
 
 test:
-	@cd python_agent && PYTHONIOENCODING=utf-8 uv run pytest -q
+	@cd python_agent && uv run pytest -q
 
 # A1 的评测跑批。退化时非零退出码（§8.4 的回归门禁）。
 # ⚠️ 基线只在 `ARGS=--update-baseline` 时才更新 —— 否则"退化"永远检测不到。
 eval:
-	@cd python_agent && PYTHONIOENCODING=utf-8 uv run python -m evals.runner $(ARGS)
+	@cd python_agent && uv run python -m evals.runner $(ARGS)
