@@ -7,15 +7,21 @@ requires-python = ">=3.12"
 # 依赖是【按需长出来的】，不是一次配齐的：
 #
 #   骨架阶段是零依赖 —— "flat level 列表组装成树"用标准库就写完了。
-#   接 DeepSeek 时长了两个：
+#   后来按需要长出来的：
 #     · openai        —— DeepSeek 走 OpenAI 兼容接口，省得自己搓 HTTP/鉴权/超时
 #     · python-dotenv —— 见下面「为什么需要它」
+#     · fastapi       —— §3.4 的 `/v1/plan` 要一个 HTTP 入口（`app/api/v1/plan.py`）
+#     · uvicorn       —— 跑上面那个（`make serve`）
+#
+#   ⚠️ 前两个是"引擎要调外面"，后两个是"外面要调引擎" —— 两个方向，别混。
 #
 # LangChain / LangGraph（§1.5）等到 A3/A4 真用上再加。
 # 提前装 = 让 A1 的环境复现多背几个用不上的包（uv.lock 是要提交的）。
 dependencies = [
+    "fastapi>=0.141.1",
     "openai>=3.14.0",
     "python-dotenv>=1.2.3",
+    "uvicorn>=0.53.0",
 ]
 
 # ⚑ 为什么需要 python-dotenv：**实测过 `uv run` 不会自动读 `.env`**

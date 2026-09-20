@@ -22,7 +22,7 @@ GOAL ?= 准备一次日本关西七日游
 #   `export` 是 make 层的事，**与 shell 无关**，两边都能用。
 export PYTHONIOENCODING = utf-8
 
-.PHONY: help plan prompt test eval
+.PHONY: help plan prompt test eval serve
 
 help:
 	@echo 'make plan GOAL="..."   目标 → 任务图骨架（调真模型；Prompt 没写会明确报错）'
@@ -30,6 +30,7 @@ help:
 	@echo 'make test               Python 侧的测试'
 	@echo 'make eval               A1 评测跑批（会花钱调模型；退化时非零退出码）'
 	@echo 'make eval ARGS="--only seed-03"   只跑一条种子（省 2/3 的调用）'
+	@echo 'make serve              起 HTTP 服务（§3.4 的 /v1/plan，端口 8000）'
 
 # ⚑ PYTHONIOENCODING=utf-8 不是装饰：Windows 控制台的默认代码页不是 UTF-8，
 #   不设它的话 pytest 报告里的中文会变成乱码 —— 而**失败时最需要读的正是那几行**。
@@ -49,3 +50,8 @@ test:
 # ⚠️ 基线只在 `ARGS=--update-baseline` 时才更新 —— 否则"退化"永远检测不到。
 eval:
 	@cd python_agent && uv run python -m evals.runner $(ARGS)
+
+# 起 HTTP 服务 —— §3.4 的 /v1/plan。
+# ⚠️ 开发用（`--reload`）；而且它**只在本地可达**，不暴露公网（§9.4）。
+serve:
+	@cd python_agent && uv run uvicorn app.main:app --reload --port 8000
