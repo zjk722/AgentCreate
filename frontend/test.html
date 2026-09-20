@@ -242,6 +242,27 @@
               '所以这里另写了一遍同样的判断）</div>'
           }
 
+          // ⚑ 反方向的**那一条**：容器**自己**写了 depends_on → 没有任何代码读它 ✗
+          //
+          //   看调度循环就知道了：
+          //     simulation.ts:124  if (containers.has(n.id)) continue      ← 容器在这儿就被跳过了
+          //     simulation.ts:126  const depsOk = n.depends_on.every(...)  ← 压根轮不到容器
+          //   容器的状态是"汇总"出来的，它自己不执行、也没人看它的依赖。
+          //
+          //   → 模型写下的"整组要等 X"**从此不存在**，而图上什么异常都没有（#13）
+          const deadDeps = body.nodes.filter(
+            (n) => containers.has(n.id) && (n.depends_on ?? []).length > 0,
+          )
+          if (deadDeps.length) {
+            html +=
+              `<div class="warn amber">⚠️ 有 <b>${deadDeps.length}</b> 个<b>容器自己</b>写了依赖，` +
+              `但<b>没有任何代码读它</b>：${deadDeps.map((n) => esc(n.title)).join('、')}<br>` +
+              '容器不执行 → 它自己的 <code>depends_on</code> 是个<b>死字段</b>，' +
+              '那条约束<b>不会生效</b>（丢的是约束，不是任务 —— 所以不阻断）。<br>' +
+              '⚑ 已定案（2026-09-20）：<code>W_CONTAINER_DEPS_UNREAD</code>，🟡。' +
+              '修法：要表达"整组要等 X"，就让<b>组里每个任务都依赖 X</b>。</div>'
+          }
+
           // ⚑ 校验没实现时**必须显示** —— 不然"0 个 issue"会被读成"校验通过"
           if (!body.check_implemented) {
             html += '<div class="warn amber">⚠️ 校验（§7.2 ① 的 7 条）**未实现** —— ' +
