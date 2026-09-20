@@ -25,6 +25,7 @@ import type {
   StructureIssue,
 } from '../types/outline'
 import { hasBlockingIssue } from './outline'
+import { awaitingDecisionIds } from './simulation'
 
 /** 整张图的处境。用于决定界面上说话的语气和重点。 */
 export type Verdict =
@@ -72,6 +73,18 @@ export interface MapSummary {
   blockers: PendingTodo[]
   /** 等用户点头的（approval=pending） */
   awaitingApproval: PendingTodo[]
+  /**
+   * 上游被放弃、**等用户拍板"我还做不做"**的。
+   *
+   * ⚑ 和 `failedTasks` 是**同一类东西** —— 两组都是
+   *   "**还没人决定要不要做**"，而不是"知道该干什么、只是还没干"。
+   *   所以它们都排在其他组前面，也都不算容器（分组没有"做不做"这回事）。
+   *
+   * ⚑ 为什么它必须显式出现在汇报里：上游被放弃之后，这个节点**既不前进
+   *   也不后退** —— 调度器不会碰它（见 simulation.ts 的 advance()），
+   *   而它也不会自己变成 skipped。**如果汇报不提它，它就静默卡住了**（#13）。
+   */
+  awaitingDecision: PendingTodo[]
 
   /** 未解决的问题（§7.1 的 issue），已按严重度排好序 */
   problems: StructureIssue[]
@@ -101,6 +114,7 @@ export function summarize(outline: OutlineNode[], issues: StructureIssue[]): Map
   const failedTasks: PendingTodo[] = []
   const blockers: PendingTodo[] = []
   const awaitingApproval: PendingTodo[] = []
+  const awaitingDecision: PendingTodo[] = []
 
   /**
    * 哪些是【分组节点】（容器）。
@@ -116,6 +130,10 @@ export function summarize(outline: OutlineNode[], issues: StructureIssue[]): Map
     outline.map((n) => n.parent_id).filter((id): id is string => id !== null),
   )
   const isTask = (n: OutlineNode) => !containers.has(n.id)
+
+  // ⚑ 这一组必须看【整张图】才算得出来：某个节点停不停在「待决定」，
+  //   取决于它依赖的那些节点现在是什么状态。所以先算一次，循环里按 id 查。
+  const needDecision = awaitingDecisionIds(outline)
 
   for (const n of outline) {
     byStatus[n.status]++
@@ -142,6 +160,8 @@ export function summarize(outline: OutlineNode[], issues: StructureIssue[]): Map
     if (n.approval?.status === 'pending') awaitingApproval.push(todo)
     // Agent 失败了、还没被处置的 —— 等用户决定"还做不做"
     if (n.status === 'failed' && n.assignee === 'agent') failedTasks.push(todo)
+    // 上游被放弃了、还没拍板的 —— 同样是在等"还做不做"（见上面的说明）
+    if (needDecision.has(n.id)) awaitingDecision.push(todo)
   }
 
   const total = outline.length
@@ -153,7 +173,7 @@ export function summarize(outline: OutlineNode[], issues: StructureIssue[]): Map
     a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1,
   )
 
-  const verdict = decideVerdict({ total, byStatus, issues, failedTasks })
+  const verdict = decideVerdict({ total, byStatus, issues, failedTasks, awaitingDecision })
 
   return {
     total,
@@ -165,8 +185,18 @@ export function summarize(outline: OutlineNode[], issues: StructureIssue[]): Map
     failedTasks,
     blockers,
     awaitingApproval,
+    awaitingDecision,
     problems,
-    headline: headlineOf({ verdict, total, byStatus, userTodos, failedTasks, blockers, problems }),
+    headline: headlineOf({
+      verdict,
+      total,
+      byStatus,
+      userTodos,
+      failedTasks,
+      awaitingDecision,
+      blockers,
+      problems,
+    }),
   }
 }
 
@@ -181,21 +211,24 @@ function decideVerdict({
   byStatus,
   issues,
   failedTasks,
+  awaitingDecision,
 }: {
   total: number
   byStatus: Record<NodeStatus, number>
   issues: StructureIssue[]
   failedTasks: PendingTodo[]
+  awaitingDecision: PendingTodo[]
 }): Verdict {
   if (total === 0) return 'empty'
   if (hasBlockingIssue(issues)) return 'blocked'
 
-  // ⚑ 有【等用户决定】的失败 → 判为 partial，而不是 running。
+  // ⚑ 有【等用户拍板】的事（失败待处置 / 上游被放弃了）→ 判为 partial，
+  //   而不是 running。
   //
   //   和容器汇总里「failed 压过 running」是同一条原则：
-  //   **把异常顶到用户眼前。** 一件事失败了、等人决定，此时说"进行中"
-  //   会让用户以为一切正常 —— 而他的汇报里最该出现的恰恰是那条待决事项。
-  if (failedTasks.length > 0) return 'partial'
+  //   **把异常顶到用户眼前。** 一件事等人决定，此时说"进行中"
+  //   会让用户以为一切正常 —— 而汇报里最该出现的恰恰是那条待决事项。
+  if (failedTasks.length > 0 || awaitingDecision.length > 0) return 'partial'
 
   if (byStatus.running > 0) return 'running'
   if (byStatus.done === total) return 'complete'
@@ -211,6 +244,7 @@ function headlineOf({
   byStatus,
   userTodos,
   failedTasks,
+  awaitingDecision,
   blockers,
   problems,
 }: {
@@ -219,6 +253,7 @@ function headlineOf({
   byStatus: Record<NodeStatus, number>
   userTodos: PendingTodo[]
   failedTasks: PendingTodo[]
+  awaitingDecision: PendingTodo[]
   blockers: PendingTodo[]
   problems: StructureIssue[]
 }): string {
@@ -245,6 +280,9 @@ function headlineOf({
       // ⚑ 说"待你决定"而不是"失败"：前者是【待办】，后者只是【陈述】。
       //   汇报的价值在于告诉用户下一步做什么，不在于复述发生了什么。
       if (failedTasks.length > 0) parts.push(`${failedTasks.length} 项待你决定`)
+      // ⚑ 和上一条分开说：问的**不是同一件事** ——
+      //   失败那条是"Agent 搞砸了，还做不做"；这一条是"上游不做了，你还做不做"。
+      if (awaitingDecision.length > 0) parts.push(`${awaitingDecision.length} 项等你拍板`)
       if (blockers.length > 0) parts.push(`${blockers.length} 项卡住`)
       if (userTodos.length > 0) parts.push(`${userTodos.length} 项需要你`)
       return parts.join('，') + '。'

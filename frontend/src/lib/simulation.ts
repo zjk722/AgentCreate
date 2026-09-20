@@ -213,7 +213,32 @@ export function awaitingDecisionIds(outline: OutlineNode[]): Set<string> {
  *   handle     ← 失败任务的两种处置，见 handleFailure()
  *   discard    ←
  */
-export type NodeAction = 'approve' | 'reject' | 'complete' | 'handle' | 'discard'
+export type NodeAction =
+  | 'approve'
+  | 'reject'
+  | 'complete'
+  | 'handle'
+  | 'discard'
+  | 'waive'
+  | 'abandon'
+
+/**
+ * 【是哪几条前置挡住了它】—— 界面点「这个照做」时，豁免的就是这几条。
+ *
+ * ⚑ 为什么要有这个函数，而不让界面自己从 `depends_on` 里筛：
+ *   **"挡着它的" 和 "被放弃的" 不是一回事** —— 前者还要**没被豁免过**。
+ *   而入口有两个（对话区的待办列表 + 画布的详情面板），各筛一遍
+ *   早晚会筛出分歧，那时候两个界面会给出不一样的两条待豁免。
+ *
+ * 空数组 = 当前没有东西挡着它（要么没被放弃的前置，要么都已经豁免过了）。
+ */
+export function blockingDepsOf(outline: OutlineNode[], nodeId: string): string[] {
+  const byId = new Map(outline.map((n) => [n.id, n]))
+  const n = byId.get(nodeId)
+  if (!n) return []
+  const waived = new Set(n.waived_deps)
+  return n.depends_on.filter((d) => !waived.has(d) && byId.get(d)?.status === 'skipped')
+}
 
 /**
  * 用户对【失败任务】的处置 —— §5.2 失败降级表的人工分支。

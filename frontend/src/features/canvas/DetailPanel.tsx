@@ -17,7 +17,7 @@ import {
   type DeleteMode,
   type DropPosition,
 } from '../../lib/outlineEdit'
-import type { NodeAction } from '../../lib/simulation'
+import { blockingDepsOf, type NodeAction } from '../../lib/simulation'
 import type { OutlineNode } from '../../types/outline'
 import { DeleteBlock } from './DeleteBlock'
 import { ASSIGNEE_LABEL, STATUS_LABEL, approvalChip } from './styles'
@@ -65,6 +65,10 @@ export function DetailPanel({
   const canDecide = node.approval?.status === 'pending'
   // Agent 失败了、还没被处置 —— 等用户决定"还做不做"（§5.2 的人工分支）
   const canResolveFailure = node.status === 'failed' && node.assignee === 'agent'
+  // 上游被放弃了、还没拍板 —— 和上一条是**同一类**：都是"还没人决定要不要做"。
+  // ⚑ 判据由 lib 算（`blockingDepsOf`），不在这里自己筛 depends_on ——
+  //   对话区那边也有一处入口，各筛一遍早晚会筛出分歧。
+  const canDecideAfterAbandon = blockingDepsOf(outline, node.id).length > 0
 
   // ── 调整位置（不用拖的那条路）─────────────────────────────
   //
@@ -112,7 +116,7 @@ export function DetailPanel({
       </header>
 
       {/* ── 可执行的操作 ─────────────────────────────────── */}
-      {(canDecide || canComplete || canResolveFailure) && (
+      {(canDecide || canComplete || canResolveFailure || canDecideAfterAbandon) && (
         <div className="flex flex-wrap gap-1.5 border-b border-slate-100 bg-slate-50 px-4 py-2.5">
           {canResolveFailure && (
             <>
@@ -129,6 +133,24 @@ export function DetailPanel({
                 className="cursor-pointer rounded border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-50"
               >
                 不处理
+              </button>
+            </>
+          )}
+          {canDecideAfterAbandon && (
+            <>
+              <button
+                type="button"
+                onClick={() => onAction(node.id, 'waive')}
+                className="cursor-pointer rounded bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-slate-700"
+              >
+                这个照做
+              </button>
+              <button
+                type="button"
+                onClick={() => onAction(node.id, 'abandon')}
+                className="cursor-pointer rounded border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-50"
+              >
+                我也放弃
               </button>
             </>
           )}

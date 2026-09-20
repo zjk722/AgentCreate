@@ -46,6 +46,46 @@ function render(
   )
 }
 
+/**
+ * ⚑ 上游被放弃之后的那一组。
+ *
+ *   它和「失败」那一组是**同一类**（都是"还没人决定要不要做"），
+ *   但**按钮完全不同** —— 所以必须单独验，不能因为"失败那组已经测过了"就跳过。
+ *   按钮错了在这里特别糟：用户点「这个照做」，实际执行的是「我也放弃」，
+ *   而图上只会少一个任务，看不出是谁干的（#13）。
+ */
+describe('AgentMessage · 上游被放弃之后', () => {
+  const outline: OutlineNode[] = [
+    node('r', null, 0, '根', { status: 'done' }),
+    node('ins', 'r', 0, '买保险', { status: 'skipped' }),
+    node('print', 'r', 1, '打印行程单', { status: 'todo', depends_on: ['ins'] }),
+  ]
+
+  it('⚑ 列出这一组，并且【两条路都给】', () => {
+    const html = render(outline)
+    expect(html).toContain('上游不做了，等你拍板')
+    expect(html).toContain('打印行程单')
+    // ⚠️ 两条都必须有 —— 只给一条就不是"选择"，是"通知"
+    expect(html).toContain('这个照做')
+    expect(html).toContain('我也放弃')
+  })
+
+  it('⚠️ 不要和「失败」那一组的按钮混了', () => {
+    const html = render(outline)
+    // 这一组不该出现失败那组的措辞
+    expect(html).not.toContain('我来处理')
+    expect(html).not.toContain('不处理')
+  })
+
+  it('没有待拍板的事时，这一组整块不出现', () => {
+    const clean: OutlineNode[] = [
+      node('r', null, 0, '根', { status: 'done' }),
+      node('a', 'r', 0, '甲', { status: 'done' }),
+    ]
+    expect(render(clean)).not.toContain('等你拍板')
+  })
+})
+
 describe('AgentMessage · 内容', () => {
   it('显示 headline', () => {
     const html = render([node('a', null, 0, '甲', { status: 'done' })])

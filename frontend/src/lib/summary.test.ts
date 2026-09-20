@@ -10,6 +10,7 @@ import type { OutlineNode, StructureIssue } from '../types/outline'
 import { node } from '../mocks/_helper'
 import { datasets } from '../mocks'
 import { reasonText } from './reasons'
+import { handleFailure } from './simulation'
 import { summarize, type Verdict } from './summary'
 
 /** 便捷：只拿 verdict */
@@ -188,6 +189,87 @@ describe('summarize · 需要人管的三类', () => {
     expect(s.headline).toContain('已完成 3/6')
     expect(s.headline).toContain('1 项卡住')
     expect(s.headline).toContain('1 项需要你')
+  })
+})
+
+/* ── 上游被放弃之后（待你拍板）─────────────────────────────── */
+
+/**
+ * ⚑ 这一组和 `failedTasks` 是**同一类东西** —— 都是"还没人决定要不要做"。
+ *   而它必须出现在汇报里：上游被放弃之后，那个节点**既不前进也不后退**
+ *   （调度器不碰它、它也不会自己变 skipped），**汇报不提它，它就静默卡住了**（#13）。
+ */
+describe('summarize · 上游被放弃之后', () => {
+  /** 就是那个真实场景：不想买保险了，行程单还做不做 */
+  const outline: OutlineNode[] = [
+    node('r', null, 0, '根', { status: 'done' }),
+    node('ins', 'r', 0, '买保险', { status: 'skipped' }),
+    node('print', 'r', 1, '打印行程单', { status: 'todo', depends_on: ['ins'] }),
+  ]
+
+  it('收进 awaitingDecision', () => {
+    expect(summarize(outline, []).awaitingDecision.map((t) => t.id)).toEqual(['print'])
+  })
+
+  it('⚠️ 上游只是 failed 时【不】算 —— 那还没被决定', () => {
+    const failedUpstream: OutlineNode[] = [
+      node('r', null, 0, '根', { status: 'done' }),
+      node('ins', 'r', 0, '买保险', { status: 'failed' }),
+      node('print', 'r', 1, '打印行程单', { status: 'todo', depends_on: ['ins'] }),
+    ]
+    expect(summarize(failedUpstream, []).awaitingDecision).toEqual([])
+  })
+
+  it('⚠️ 容器不算 —— 分组没有"做不做"这回事', () => {
+    // 给「打印行程单」加个孩子，它就从任务变成分组了
+    const withContainer: OutlineNode[] = [...outline, node('p1', 'print', 0, '打个草稿')]
+    expect(summarize(withContainer, []).awaitingDecision).toEqual([])
+  })
+
+  it('判定为 partial —— 和 failedTasks 同一条原则', () => {
+    expect(summarize(outline, []).verdict).toBe('partial')
+  })
+
+  it('headline 说出来，而且和「待你决定」分开说', () => {
+    const h = summarize(outline, []).headline
+    expect(h).toContain('1 项等你拍板')
+    // 两件事问的不是同一个问题，所以不能合成一句
+    expect(h).not.toContain('待你决定')
+  })
+
+  it('豁免之后就【不再是】待办了', () => {
+    const waived: OutlineNode[] = [
+      node('r', null, 0, '根', { status: 'done' }),
+      node('ins', 'r', 0, '买保险', { status: 'skipped' }),
+      node('print', 'r', 1, '打印行程单', {
+        status: 'todo',
+        depends_on: ['ins'],
+        waived_deps: ['ins'],
+      }),
+    ]
+    expect(summarize(waived, []).awaitingDecision).toEqual([])
+  })
+
+  it('⚑⚑ 真实数据集端到端：点「不处理」之后，行程单转头进这一组', () => {
+    // ⚑ 这是 A′ 那次改动**最初被问出来**的场景，走的是仓库里那份真实 mock：
+    //
+    //     购买旅行保险 failed → 用户点「不处理」→ 上游变 skipped
+    //     → 打印行程单【不】被级联放弃，而是出现在「等你拍板」里
+    //
+    //   ⚠️ 改这一条要小心：它在同时钉三件事 —— 状态、汇报、和"没被提前放弃"。
+    const japan = datasets.find((d) => d.key === 'japan-trip')!
+
+    // 决定之前：它就是个普通待办，还没什么可拍板的
+    expect(summarize(japan.outline, []).awaitingDecision).toEqual([])
+
+    const after = handleFailure(japan.outline, 'b20000000025', 'discard')
+    const s = summarize(after, [])
+
+    expect(s.awaitingDecision.map((t) => t.title)).toEqual(['打印行程单'])
+    expect(s.headline).toContain('等你拍板')
+    // ⚠️ 最要紧的一条：它**没有**被级联放弃 —— 还是 todo，
+    //    所以用户仍然能选「这个照做」把它放行
+    expect(after.find((n) => n.id === 'b20000000026')!.status).toBe('todo')
   })
 })
 
