@@ -131,13 +131,34 @@
             body: JSON.stringify({ goal: $('goal').value }),
           })
           const secs = ((performance.now() - t0) / 1000).toFixed(1)
-          const body = await r.json()
 
-          if (!r.ok) {
-            // 后端的错误一律在 detail 里（502 = 调模型失败 / 500 = Prompt 没写）
+          // ⚑ 先拿**文本**，不要直接 `r.json()` —— 这一步是踩过才加的：
+          //   代理没生效时（比如 Vite 用的是另一份配置），拿回来的是一整页 HTML，
+          //   而 `r.json()` 会抛 "Unexpected end of JSON input" ✗
+          //   —— 那句话**完全没说"请求根本没到后端"**，把人引向了错的方向。
+          const text = await r.text()
+          let body = null
+          try {
+            body = JSON.parse(text)
+          } catch {
+            /* 不是 JSON —— 下面按"不是 JSON"报，并说清可能的原因 */
+          }
+
+          if (!r.ok || body === null) {
+            // ⚑ 这两种必须分开说，因为修法完全不同：
+            //   · 后端回了 JSON 的 detail（502 / 500）→ 是模型或配置的问题
+            //   · 拿回来的是 HTML            → **请求没到后端**（代理 / 服务没起来）
+            const isHtml = /^\s*</.test(text)
+            const why = isHtml
+              ? '拿回来的是 <b>一页 HTML</b>，不是后端的 JSON —— ' +
+                '说明<b>请求根本没到后端</b>。查两件事：<br>' +
+                '&nbsp;&nbsp;· 上面那行后端状态是不是绿的<br>' +
+                '&nbsp;&nbsp;· Vite 代理还在不在（换过分支 / 改过 vite.config 的话，' +
+                'Vite 可能正带着另一份配置跑）→ <b>重启 vite</b> 最省事'
+              : `HTTP ${r.status}`
             out.innerHTML =
-              `<div class="card"><div class="warn red">HTTP ${r.status}（${secs} 秒）` +
-              `<pre>${esc(body.detail ?? JSON.stringify(body))}</pre></div></div>`
+              `<div class="card"><div class="warn red">${why}（${secs} 秒）` +
+              `<pre>${esc(body?.detail ?? text.slice(0, 400))}</pre></div></div>`
             return
           }
 
