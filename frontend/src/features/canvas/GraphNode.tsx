@@ -20,6 +20,7 @@ import { EvidenceIcon, LockIcon, StatusIcon } from './StatusIcon'
 import {
   ASSIGNEE_BORDER_STYLE,
   ASSIGNEE_LABEL,
+  AWAITING_DECISION_CHIP,
   ENTER_STAGGER_MS,
   STATUS_BORDER,
   STATUS_LABEL,
@@ -61,12 +62,21 @@ export function GraphNode({
   selected,
   onSelect,
   drag,
+  awaitingDecision,
 }: {
   p: PositionedNode
   opts: LayoutOptions
   selected: boolean
   onSelect: (id: string) => void
   drag: DragHandlers
+  /**
+   * 它是不是停在「等你拍板」（上游被放弃了）。
+   *
+   * ⚑ 为什么不在这里自己算：这个判断要看**别的节点**的状态，
+   *   而卡片只拿得到自己那一个。由画布算好一次传下来
+   *   （`awaitingDecisionIds()`），和容器状态汇总同一个走法。
+   */
+  awaitingDecision: boolean
 }) {
   const n = p.data
   const state = displayState(n)
@@ -155,8 +165,8 @@ export function GraphNode({
       onDragEnd={() => drag.onEnd()}
       // 屏幕阅读器需要一句话说清这张卡片是什么
       aria-label={`${n.title}，${STATUS_LABEL[n.status]}，${ASSIGNEE_LABEL[n.assignee]}${
-        chip ? `，${chip.label}` : ''
-      }`}
+        awaitingDecision ? '，等你拍板' : ''
+      }${chip ? `，${chip.label}` : ''}`}
     >
       {/* 插入位置指示线。纯装饰，且必须 pointer-events-none ——
           否则它会挡住底下卡片的拖拽判定，指示线自己变成落点 */}
@@ -176,12 +186,25 @@ export function GraphNode({
       </div>
 
       {/* ── 元信息行 ───────────────────────────────────── */}
-      <div className="flex items-center gap-1.5 text-[10px] leading-none">
+      {/* ⚠️ flex-wrap 是必须的：这一行最多可能同时出现「状态 + 归属 + 两块 chip」，
+          卡片宽度是固定的。不换行的话最后一块会被裁掉 ——
+          而**被裁掉的恰好是刚加的那块**，看起来就像它没生效 */}
+      <div className="flex flex-wrap items-center gap-1.5 text-[10px] leading-none">
         <span className={`rounded px-1 py-0.5 font-medium ${STATUS_SOFT_BG[n.status]} ${STATUS_TEXT[n.status]}`}>
           {STATUS_LABEL[n.status]}
         </span>
 
         <span className="text-slate-500">{ASSIGNEE_LABEL[n.assignee]}</span>
+
+        {/* ⚑ 排在审批 chip 前面：它问的是更靠前的一个问题 ——
+            「这件事还做不做」（本块）在「准不准它做」（审批）之前。
+            ⚠️ 两个都显示、不互相顶掉：两件事**都是真的**，
+               藏掉任何一个都是"图上看不出来"（#13）。 */}
+        {awaitingDecision && (
+          <span className={`rounded px-1 py-0.5 font-medium ${AWAITING_DECISION_CHIP.className}`}>
+            {AWAITING_DECISION_CHIP.label}
+          </span>
+        )}
 
         {chip && (
           <span className={`rounded px-1 py-0.5 font-medium ${chip.className}`}>

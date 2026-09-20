@@ -15,7 +15,7 @@ import { useMemo, useState } from 'react'
 import { DEFAULT_LAYOUT, dependencyPairs, layout } from '../../lib/layout'
 import { buildTree } from '../../lib/outline'
 import { moveNode, type DeleteMode, type DropPosition } from '../../lib/outlineEdit'
-import type { NodeAction } from '../../lib/simulation'
+import { awaitingDecisionIds, type NodeAction } from '../../lib/simulation'
 import type { OutlineNode, StructureIssue } from '../../types/outline'
 import { DependencyEdge } from './DependencyEdge'
 import { DetailPanel } from './DetailPanel'
@@ -89,6 +89,15 @@ export function TaskGraph({
   const selectedNode = selected
     ? (outline.find((n) => n.id === selected) ?? null)
     : null
+
+  /**
+   * 谁停在「等你拍板」（上游被放弃了）。
+   *
+   * ⚑ 在画布这一层算一次、按 id 传给每张卡 —— 因为它要看**别的节点**的
+   *   状态，而一张卡只拿得到自己那一个。和容器状态汇总
+   *  （`rollupStatuses`）同一个走法：整图算一次，渲染时按 id 查。
+   */
+  const awaitingDecision = useMemo(() => awaitingDecisionIds(outline), [outline])
 
   /**
    * 判断"鼠标底下这个位置能不能放"。
@@ -203,6 +212,7 @@ export function TaskGraph({
             selected={selected === p.id}
             onSelect={setSelected}
             drag={drag}
+            awaitingDecision={awaitingDecision.has(p.id)}
           />
         ))}
       </div>

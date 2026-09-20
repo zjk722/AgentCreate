@@ -294,6 +294,14 @@ export function DetailPanel({
 
         {node.assignee_reason && <Row label="原因">{node.assignee_reason}</Row>}
 
+        {/* ⚑ 排在「审批」前面：它问的是更靠前的一个问题 ——
+            「这件事还做不做」在「准不准它做」之前。
+            ⚠️ 两条都显示、不互相顶掉：两件事**都是真的**，
+               藏掉任何一个都是"界面上看不出来"（#13）。 */}
+        {canDecideAfterAbandon && (
+          <Row label="决定">上游已放弃 —— 这件事还做不做，由你定</Row>
+        )}
+
         {chip && <Row label="审批">{chip.label}</Row>}
 
         {node.approval?.status === 'approved' && <Row label="审批">已批准</Row>}
