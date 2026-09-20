@@ -35,7 +35,7 @@ class PlanResult:
     check_implemented: bool = False
 
 
-def plan_goal(goal: str, *, max_depth: int = 3, max_children: int = 6) -> PlanResult:
+def plan_goal(goal: str, *, max_depth: int = 3, max_children: int = 9) -> PlanResult:
     """目标 → 任务图骨架（§3.4 的 `/v1/plan` 干的就是这件事）。"""
     tools = load_tools()
     messages = build_messages(goal, tools, max_depth, max_children)
