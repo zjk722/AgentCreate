@@ -5,7 +5,10 @@
  *
  *   1. running 的任务 ──▶ done（产出证据 + 摘要）
  *   2. 依赖已满足的 todo ──▶ running（受 Semaphore(maxParallel) 限制，§NFR-2）
- *   3. 依赖失败/跳过的 ──▶ skipped（级联，§5.2 失败降级表）
+ *
+ *   ⚑ **只有两步。** 原来还有第 3 步「上游被放弃 → 下游自动 skipped」，
+ *     2026-09-20 删掉了 —— 它替用户做了决定。删掉的理由写在 `advance()` 里，
+ *     下游现在的去处是 `awaitingDecisionIds()` 的「待你决定」。
  *
  *   并且【拒绝】推进这些节点：
  *
@@ -20,7 +23,7 @@
  *
  * 纯函数：输入 outline，返回新的 outline；无进展时返回 null（调用方据此停表）。
  */
-import type { Evidence, NodeStatus, OutlineNode } from '../types/outline'
+import type { Evidence, OutlineNode } from '../types/outline'
 
 /** 一个节点跑完会产出什么 —— mock 数据里预置。 */
 export interface ExecutionOutcome {
@@ -44,23 +47,6 @@ export const DEFAULT_ADVANCE: AdvanceOptions = {
   maxParallel: 6,
   completePerTick: 1,
 }
-
-/**
- * 只有【已被放弃的】上游才会级联跳过下游。
- *
- * ⚠️ 这里【故意不含 `'failed'`】—— 这是对 §5.2「依赖任务失败 → 下游 skipped」
- *    的一处收紧，理由：
- *
- *    `failed` 意味着"**还没被决定**"—— 用户可能选择「我来处理」。
- *    此时就级联跳过下游，等于**提前替用户放弃了**下游，
- *    而且这个放弃是不可逆的（下游已经变成 skipped）。
- *
- *    所以正确的顺序是：上游 failed → 下游【等着】→ 用户决定不处理
- *    → 上游变 skipped → **这时**才级联。
- *
- *    ——仍然遵守"遇到需要判断的地方让人决定，不要替人猜"这条原则。
- */
-const ABANDONED_STATUSES: NodeStatus[] = ['skipped']
 
 export function advance(
   outline: OutlineNode[],
@@ -123,7 +109,13 @@ export function advance(
     // 分组节点不是任务
     if (containers.has(n.id)) continue
     // §5.2：拓扑排序 —— 只投递依赖已满足的（读 byId，能看到本 tick 刚完成的）
-    const depsOk = n.depends_on.every((d) => byId.get(d)?.status === 'done')
+    //
+    // ⚑ `waived_deps` 里的前置**算满足** —— 用户已经点过「这个照做」。
+    //   注意它豁免的是【点名的那些依赖】，不是把这个节点整个放行 ✗。
+    const waived = new Set(n.waived_deps)
+    const depsOk = n.depends_on.every(
+      (d) => waived.has(d) || byId.get(d)?.status === 'done',
+    )
     if (!depsOk) continue
 
     n.status = 'running'
@@ -131,20 +123,36 @@ export function advance(
     changed = true
   }
 
-  /* ── 阶段 3：上游被放弃的 ──▶ skipped（级联） ───────────── */
-  for (const n of next) {
-    if (n.status !== 'todo') continue
-    if (n.assignee !== 'agent') continue
-    const abandoned = n.depends_on.some((d) => {
-      const dep = byId.get(d)
-      return dep ? ABANDONED_STATUSES.includes(dep.status) : false
-    })
-    if (abandoned) {
-      n.status = 'skipped'
-      changed = true
-    }
-  }
-
+  /* ── 阶段 3（原：上游被放弃 → 下游自动跳过）——【已删除】──────
+   *
+   * ⚑ 2026-09-20 删的。理由：它**替用户做了决定** ——
+   *   而 §5.2 的原则是「遇到需要判断的地方，让人决定，不要替人猜」。
+   *
+   *   旧行为：上游一变 `skipped`，下游**立刻**跟着 `skipped`。
+   *   问题是「上游被放弃」**不等于**「下游也该放弃」——
+   *   最典型的例子就在 `mocks/japan-trip.ts` 里：
+   *   用户不想买保险了 → 「打印行程单」**跟着死** ✗，可它照样能打。
+   *   「要不要保险」和「要不要打印行程单」是**两个独立的决定**。
+   *
+   *   ⚑ 更根本的一层：上游该不该放弃，是用户判断的 ✓；
+   *     但下游该不该跟着放弃，**也只有用户能判断** ✓ ——
+   *     代码替它选了 `skipped`，等于把一个**还可以商量的处境**，
+   *     变成了一个**已经发生、而且不可逆的事实** ✗。
+   *
+   *   新行为：下游停在【待你决定】（见 awaitingDecisionIds()）——
+   *   既不自动跑、也不自动放弃，界面上给两个出口：
+   *     · 「我也放弃」→ abandonNode() → status = 'skipped'
+   *     · 「这个照做」→ waiveDeps()   → 那条前置写进 waived_deps
+   *
+   *   ⚠️ **不要**改成"上游是 skipped 就算依赖满足" ✗ —— 那是另一条路，
+   *      它会把**硬前置**一起放行（「决定出行日期」被放弃后，
+   *      「预订酒店」照样被派发 ✗，而没有日期根本订不了）。
+   *      豁免必须**逐条、且用户点过** —— 这就是 `waived_deps` 存在的理由。
+   *
+   *   ⚑ 顺带补掉一个静默黑洞：旧级联只管 `assignee === 'agent'`，
+   *     于是**归用户的任务**，上游被放弃后会永远停在 `todo` 且无人过问 ✗。
+   *     现在它也会被算进「待你决定」。
+   */
   return changed ? next : null
 }
 
@@ -155,6 +163,42 @@ function fallbackOutcome(n: OutlineNode): ExecutionOutcome {
     result_summary: `${n.title} · 已完成`,
     elapsed_ms: 900,
   }
+}
+
+/* ── 派生：谁停在「待你决定」 ─────────────────────────────── */
+
+/**
+ * 为整张图算出【哪些节点停在「待你决定」】—— 一次算完，UI 按 id 查。
+ *
+ * ⚑ 为什么需要一个专门的概念：上游被放弃之后，下游处在一个
+ *   **既不前进也不后退**的处境 —— 它在等一个**只有用户能做的判断**
+ *   （"这件事我还要不要做"）。这跟 `todo` 不是一回事
+ *   （`todo` 是"排队等着，会自己轮到我"）。
+ *
+ *     待决定  ⟺  `status === 'todo'`
+ *            且  `depends_on` 里有一条指向 `status === 'skipped'` 的节点
+ *            且  那一条**不在 `waived_deps` 里**（用户还没说「照做」）
+ *
+ * ⚑ **为什么不新增一个 `status`**：§4.2 的三轴里 `status` 管"这活到哪一步"，
+ *   而"等用户拍板"是**决策**那一轴的事 —— 塞进 `status` 会让每一处读它的代码
+ *   （§5.3 的"executing 时拒绝编辑"、D4 的配色、A6 的调度）都被迫理解这套语义。
+ *   和 `displayState()`、容器状态是同一个做法：**存储保持正交，展示层自己算。**
+ *
+ * ⚠️ **不看 `assignee`** —— 归 `user` 的、`blocked` 的同样会停在这里。
+ *   （旧级联只管 `agent`，于是归用户的任务会永远停在 `todo` 且无人过问 ✗。）
+ * ⚠️ **不看容器** —— 容器不执行，它的状态是汇总出来的。
+ */
+export function awaitingDecisionIds(outline: OutlineNode[]): Set<string> {
+  const byId = new Map(outline.map((n) => [n.id, n]))
+  const out = new Set<string>()
+
+  for (const n of outline) {
+    if (n.status !== 'todo') continue
+    const waived = new Set(n.waived_deps)
+    const stuck = n.depends_on.some((d) => !waived.has(d) && byId.get(d)?.status === 'skipped')
+    if (stuck) out.add(n.id)
+  }
+  return out
 }
 
 /* ── 用户侧的动作 ─────────────────────────────────────────── */
@@ -188,8 +232,9 @@ export type NodeAction = 'approve' | 'reject' | 'complete' | 'handle' | 'discard
  *
  * ⚠️ 'discard' 产生的 skipped 是【有意放弃】，所以它算"已了结" ——
  *   父容器可以因此判为完成（见 outline.ts 的 combineStatus）。
- *   这正是为什么自动级联的 skipped 只能来自已被放弃的上游，
- *   不能来自还没决定的 failed。
+ *   所以这个赋值走的是和 `abandonNode()` 完全一样的路（→ `skipped`），
+ *   只是触发的处境不同：这里只对「Agent 失败了」开放，
+ *   那里对任何还没开始做的节点开放。
  */
 export function handleFailure(
   outline: OutlineNode[],
@@ -207,6 +252,73 @@ export function handleFailure(
       assignee_reason: 'agent_failed' as const,
       status: decision === 'handle' ? ('todo' as const) : ('skipped' as const),
     }
+  })
+}
+
+/**
+ * 用户决定【这个照做】—— 认可跳过那几条被放弃的前置。
+ *
+ * ⚑ 只豁免**点名的那几条**，不是"所有被放弃的前置" ——
+ *   因为"我认可跳过买保险"和"我认可跳过办签证"是**两个决定**。
+ *   界面上把当前挡住它的那几条摆出来，用户点一下，就豁免那几条。
+ *
+ * ⚑ **不改 `depends_on`**：依赖关系本身没变，变的是"我不等它了"。
+ *   两件事分开记，事后才查得出发生过什么 —— 见 types 里 `waived_deps` 的说明。
+ *
+ * 幂等：已经在豁免里的 id 再加一次没有副作用。
+ */
+export function waiveDeps(
+  outline: OutlineNode[],
+  nodeId: string,
+  depIds: string[],
+): OutlineNode[] {
+  const add = new Set(depIds)
+  return outline.map((n) =>
+    n.id === nodeId ? { ...n, waived_deps: [...new Set([...n.waived_deps, ...add])] } : n,
+  )
+}
+
+/**
+ * 反悔 —— 把这几条从豁免里拿掉，它又变回【待你决定】。
+ *
+ * ⚑ 这个动作的存在，正是 `waived_deps` 比"直接把依赖从 `depends_on` 删掉"强的地方：
+ *   删掉的依赖**加不回来**（"重新加上"和"本来就有"在数据上一模一样 ✗），
+ *   而豁免**可以撤销**。
+ */
+export function unwaiveDeps(
+  outline: OutlineNode[],
+  nodeId: string,
+  depIds: string[],
+): OutlineNode[] {
+  const drop = new Set(depIds)
+  return outline.map((n) =>
+    n.id === nodeId ? { ...n, waived_deps: n.waived_deps.filter((d) => !drop.has(d)) } : n,
+  )
+}
+
+/**
+ * 用户决定【我也放弃】—— 这个节点不做了。
+ *
+ * ⚑ 这是 `blocked` 节点**唯一的出口**。此前三个接口没有一条能让它变成
+ *   `skipped`（v0.7 缺口 #5）：一个"谁都做不了"的节点就那么永远挂着 ✗ ——
+ *   连"我不做这个"都表达不了。
+ *
+ * ⚑ 数据变化和 `handleFailure(..., 'discard')` 一样（都是 → `skipped`），
+ *   为什么仍是两个函数：那一个是「**Agent 失败了**，你来处置」
+ *   （只对 `failed` + `agent` 生效），这一个是「**我决定不做这件事**」
+ *   （任何 `todo` 都行）。**数据一样、处境不同** —— 合并会让
+ *   "哪里该调哪个"变得含糊。
+ *
+ * ⚠️ 产生的 `skipped` 是【有意放弃】，所以算"已了结"（`combineStatus`）——
+ *   父容器可以因此判为完成。
+ */
+export function abandonNode(outline: OutlineNode[], nodeId: string): OutlineNode[] {
+  return outline.map((n) => {
+    if (n.id !== nodeId) return n
+    // 只有【还没开始做的】能放弃（幂等）：
+    //   running 正在跑、done 已有证据、failed 走 handleFailure 那条路
+    if (n.status !== 'todo') return n
+    return { ...n, status: 'skipped' as const }
   })
 }
 

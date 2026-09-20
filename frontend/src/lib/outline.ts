@@ -405,10 +405,15 @@ function validateDependencies(byId: Map<NodeId, OutlineNode>, issues: StructureI
  *   显示 running 会让人以为一切正常。**把异常顶到用户眼前是这项目的产品立场**
  *   （和"坏数据显式显示不静默丢弃"是同一条原则）。
  *
- *   **为什么 skipped 算已了结**：skipped 只应来自「用户有意放弃」
- *   或「从用户放弃级联而来」（见 simulation.ts）。既然是人接受的，
+ *   **为什么 skipped 算已了结**：`skipped` 只应来自**人的决定** ——
+ *   用户点了「我也放弃」（`abandonNode()`），或对失败的任务选了「不处理」
+ *   （`handleFailure(..., 'discard')`）。既然是人接受的，
  *   父节点就该算完成 —— 但注意【完成度百分比仍按 done 计】，
  *   "了结了"和"都做完了"不是同一件事，两个数字都真实。
+ *
+ *   ⚠️ 2026-09-20 之前这里还有第三个来源：「从用户放弃**级联**而来」。
+ *     那条已经删掉了 —— 上游被放弃**不等于**下游也该放弃，
+ *     现在下游停在「待你决定」，等用户自己说了算（见 simulation.ts）。
  */
 export function combineStatus(children: NodeStatus[]): NodeStatus {
   if (children.length === 0) return 'todo'
