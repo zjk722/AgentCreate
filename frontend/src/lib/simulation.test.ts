@@ -10,13 +10,17 @@ import type { OutlineNode } from '../types/outline'
 import { node } from '../mocks/_helper'
 import {
   DEFAULT_ADVANCE,
+  abandonNode,
   advance,
   approve,
   approveAll,
+  awaitingDecisionIds,
   completeNode,
   handleFailure,
   markUserTasksDone,
   rejectNode,
+  unwaiveDeps,
+  waiveDeps,
   type ExecutionPlan,
 } from './simulation'
 import { displayState } from './outline'
@@ -153,9 +157,10 @@ describe('advance · 拒绝执行的四条规则', () => {
     expect(t2.find((n) => n.id === 'c')!.status).toBe('running')
   })
 
-  it('⚑ 依赖【只是 failed】（还没被决定）→ 下游【不】级联跳过，等着', () => {
-    // 这是对 §5.2「依赖失败 → 下游 skipped」的一处收紧：
-    // failed 意味着还没被决定，此时级联等于提前替用户放弃下游。
+  it('⚑ 依赖【只是 failed】（还没被决定）→ 下游【不】级联，等着', () => {
+    // failed 意味着"还没被决定" —— 用户可能选「我来处理」。
+    // ⚑ 现在这条已经是**通例的一个特例**：上游出了任何事，下游都不自动放弃
+    //   （见下面那条）。留在这里是为了钉住"尤其不能因为 failed 就动下游"。
     expect(
       advance(
         [
@@ -167,18 +172,25 @@ describe('advance · 拒绝执行的四条规则', () => {
     ).toBeNull() // 无变化
   })
 
-  it('⚑ 上游被【放弃】（skipped）→ 下游这时才级联跳过', () => {
-    const next = advance(
-      [
-        node('skip', null, 0, '上游放弃', { status: 'skipped' }),
-        node('t', null, 1, '下游', { status: 'todo', depends_on: ['skip'] }),
-      ],
-      PLAN,
-    )!
-    expect(next.find((n) => n.id === 't')!.status).toBe('skipped')
+  it('⚑⚑ 上游被【放弃】→ 下游【也】不自动放弃，停在「待你决定」', () => {
+    // ⚑ 这一条 2026-09-20 改过。**原来**是"这时才级联跳过"，改的理由：
+    //
+    //   「上游被放弃」**不等于**「下游也该放弃」——
+    //   用户不想买保险了，不代表「打印行程单」也不做（它照样能打）。
+    //   "要不要保险"和"要不要打印行程单"是**两个独立的决定**，
+    //   而**只有用户能判断第二个**。代码替它选了 skipped，等于把一个
+    //   还可以商量的处境，变成已经发生、而且不可逆的事实 —— #13 的形状。
+    const outline = [
+      node('skip', null, 0, '上游放弃', { status: 'skipped' }),
+      node('t', null, 1, '下游', { status: 'todo', depends_on: ['skip'] }),
+    ]
+    // ① 调度器【碰都不碰它】—— 不是"跳过"，是根本没进展
+    expect(advance(outline, PLAN)).toBeNull()
+    // ② 但它不再是"普普通通的待办"：它被算进「待你决定」，界面上看得见
+    expect([...awaitingDecisionIds(outline)]).toEqual(['t'])
   })
 
-  it('⚑ 完整链路：failed → 用户选「不处理」→ 下游才级联', () => {
+  it('⚑ 完整链路：failed → 用户选「不处理」→ 下游转头【待你决定】', () => {
     const outline = [
       node('bad', null, 0, '上游失败', { status: 'failed' }),
       node('t', null, 1, '下游', { status: 'todo', depends_on: ['bad'] }),
@@ -186,9 +198,9 @@ describe('advance · 拒绝执行的四条规则', () => {
     // 第一步：用户决定不处理
     const afterDiscard = handleFailure(outline, 'bad', 'discard')
     expect(afterDiscard.find((n) => n.id === 'bad')!.status).toBe('skipped')
-    // 第二步：这时下游才被级联跳过
-    const after = advance(afterDiscard, PLAN)!
-    expect(after.find((n) => n.id === 't')!.status).toBe('skipped')
+    // 第二步：下游不自己动，但开始等用户拍板
+    expect(advance(afterDiscard, PLAN)).toBeNull()
+    expect([...awaitingDecisionIds(afterDiscard)]).toEqual(['t'])
   })
 
   it('⚑ 完整链路：failed → 用户选「我来处理」→ 下游【不】被跳过', () => {
@@ -200,6 +212,112 @@ describe('advance · 拒绝执行的四条规则', () => {
     expect(afterHandle.find((n) => n.id === 'bad')!.status).toBe('todo')
     // 下游仍然是 todo（既没跳过，也还没到能执行的时候）
     expect(afterHandle.find((n) => n.id === 't')!.status).toBe('todo')
+  })
+})
+
+/* ── 上游被放弃之后：两个出口 ─────────────────────────────── */
+
+/**
+ * ⚑ 这一组测的是**两个出口真的通** —— 光"不自动放弃"是不够的：
+ *   没有出口的话，下游只是换了个地方卡住（从"静默被跳过"变成"静默卡住"），
+ *   **#13 只是换了个形状** ✗。
+ *
+ *     「我也放弃」→ `abandonNode()` → `status = 'skipped'`
+ *     「这个照做」→ `waiveDeps()`   → 那条前置写进 `waived_deps`，依赖算满足
+ */
+describe('上游被放弃之后 · 两个出口', () => {
+  /** 所有用例的起点：上游被放弃，下游在等用户拍板 */
+  const setup = () => [
+    node('skip', null, 0, '买保险', { status: 'skipped' }),
+    node('t', null, 1, '打印行程单', { status: 'todo', depends_on: ['skip'] }),
+  ]
+
+  it('出口一「这个照做」→ 豁免之后它就能被派发', () => {
+    const waived = waiveDeps(setup(), 't', ['skip'])
+    expect(waived.find((n) => n.id === 't')!.waived_deps).toEqual(['skip'])
+    // 依赖算满足了 → 下一个 tick 就投递
+    expect(advance(waived, PLAN)!.find((n) => n.id === 't')!.status).toBe('running')
+    // 而且不再是「待你决定」
+    expect(awaitingDecisionIds(waived).size).toBe(0)
+  })
+
+  it('⚑ 豁免【不】改 depends_on —— 依赖关系本身没变', () => {
+    // 这正是它比"直接把依赖删掉"强的地方：事后还查得出"我原来依赖它"，
+    // 而"删掉"和"重新加上"在数据上一模一样，分不出来 ✗
+    const waived = waiveDeps(setup(), 't', ['skip'])
+    expect(waived.find((n) => n.id === 't')!.depends_on).toEqual(['skip'])
+  })
+
+  it('⚑ 反悔 → 又变回「待你决定」', () => {
+    const back = unwaiveDeps(waiveDeps(setup(), 't', ['skip']), 't', ['skip'])
+    expect(back.find((n) => n.id === 't')!.waived_deps).toEqual([])
+    expect([...awaitingDecisionIds(back)]).toEqual(['t'])
+    expect(advance(back, PLAN)).toBeNull()
+  })
+
+  it('⚑⚑ 豁免只对【点名的那条】生效 —— 硬前置必须逐条点', () => {
+    // ⚠️ 这一条是整个设计的要害。如果实现被写成"上游是 skipped 就算满足"
+    //    （通用放行），这条会红 —— 而那意味着「预订酒店」会在
+    //    **没定出行日期**的情况下被派发 ✗（现实里订不了）。
+    const outline = [
+      node('date', null, 0, '决定出行日期', { status: 'skipped' }),
+      node('ins', null, 1, '买保险', { status: 'skipped' }),
+      node('hotel', null, 2, '预订酒店', { status: 'todo', depends_on: ['date'] }),
+      node('print', null, 3, '打印行程单', { status: 'todo', depends_on: ['date', 'ins'] }),
+    ]
+
+    // 只豁免「买保险」—— 打印行程单还等着「出行日期」，所以仍然不动
+    const partial = waiveDeps(outline, 'print', ['ins'])
+    expect([...awaitingDecisionIds(partial)].sort()).toEqual(['hotel', 'print'])
+    expect(advance(partial, PLAN)).toBeNull()
+
+    // 把「出行日期」也豁免掉，它才真的能跑
+    const full = waiveDeps(partial, 'print', ['date'])
+    expect(advance(full, PLAN)!.find((n) => n.id === 'print')!.status).toBe('running')
+
+    // ⚠️ 而「预订酒店」**仍然**在等 —— 没被顺手放行
+    expect(awaitingDecisionIds(full).has('hotel')).toBe(true)
+  })
+
+  it('出口二「我也放弃」→ blocked 的节点终于有出口了（v0.7 缺口 #5）', () => {
+    // 一个"谁都做不了"的节点，此前三个接口没有一条能让它变 skipped ——
+    // 连"我不做这个"都表达不了
+    const outline = [
+      node('r', null, 0, '根', { status: 'done' }),
+      node('x', 'r', 0, '预订米其林餐厅', {
+        assignee: 'blocked',
+        assignee_reason: 'no_tool',
+        status: 'todo',
+      }),
+    ]
+    expect(abandonNode(outline, 'x').find((n) => n.id === 'x')!.status).toBe('skipped')
+  })
+
+  it('「我也放弃」只对【还没开始做的】生效（幂等）', () => {
+    // running 正在跑、done 已有证据（放弃它会把证据一起丢掉）、
+    // failed 该走 handleFailure 那条路
+    const cases: Array<[string, OutlineNode]> = [
+      ['running', node('a', null, 0, '跑着', { status: 'running' })],
+      ['done', node('a', null, 0, '做完了', { status: 'done' })],
+      ['failed', node('a', null, 0, '失败了', { status: 'failed' })],
+      ['skipped', node('a', null, 0, '已放弃', { status: 'skipped' })],
+    ]
+    for (const [label, n] of cases) {
+      expect(abandonNode([n], 'a')[0].status, label).toBe(n.status)
+    }
+  })
+
+  it('豁免过的 id 过期了（那个节点后来被删了）→ 不报错、也不影响', () => {
+    // ⚠️ `waived_deps` **允许过期**（见 types/outline.ts）：被豁免的节点
+    //   后来被删了，这个 id 在 depends_on 里也没了 —— 读的时候忽略即可。
+    //   **这不是坏数据，是设计允许的**（和 E_DANGLING_DEP 正相反）。
+    const outline = [
+      node('a', null, 0, '甲', { status: 'done' }),
+      node('t', null, 1, '乙', { status: 'todo', depends_on: ['a'], waived_deps: ['gone'] }),
+    ]
+    expect(() => advance(outline, PLAN)).not.toThrow()
+    expect(awaitingDecisionIds(outline).size).toBe(0)
+    expect(advance(outline, PLAN)!.find((n) => n.id === 't')!.status).toBe('running')
   })
 })
 

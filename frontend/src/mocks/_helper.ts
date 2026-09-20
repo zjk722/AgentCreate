@@ -26,6 +26,8 @@ export function node(
     assignee: 'agent',
     status: 'done',
     depends_on: [],
+    // ⚑ 「没有豁免过任何前置」是最常见的形态 —— 只有用户点过「这个照做」才有值
+    waived_deps: [],
     locked: false,
     ...over,
   }

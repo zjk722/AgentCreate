@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { datasets } from '../mocks'
 import { node } from '../mocks/_helper'
-import type { OutlineNode } from '../types/outline'
+import type { IssueCode, OutlineNode } from '../types/outline'
 import { buildTree } from './outline'
 import { deleteImpact, deleteNode, moveNode, nodePath, possibleParents, siblingsOf } from './outlineEdit'
 
@@ -42,9 +42,15 @@ function base(): OutlineNode[] {
   ]
 }
 
-/** 断言"挪完之后数据仍然合法"—— 用项目自己的校验器，不另写一套。 */
-function expectClean(outline: OutlineNode[], what = ''): void {
-  const issues = buildTree(outline).issues
+/**
+ * 断言"挪完之后数据仍然合法"—— 用项目自己的校验器，不另写一套。
+ *
+ * ⚠️ `allow` 是**点名例外**，不是"放宽"：用它的时候必须写清楚为什么
+ *    （见下面穷举那条里对 `E_DEP_ON_CONTAINER` 的说明）。
+ *    例外不写理由的话，它就退化成"这个断言反正也不严"。
+ */
+function expectClean(outline: OutlineNode[], what = '', allow: IssueCode[] = []): void {
+  const issues = buildTree(outline).issues.filter((i) => !allow.includes(i.code))
   expect(issues, `${what} 产生了坏数据：${JSON.stringify(issues, null, 2)}`).toEqual([])
 }
 
@@ -298,7 +304,36 @@ describe('moveNode · 在所有 mock 数据集上穷举', () => {
             const r = moveNode(d.outline, from.id, to.id, pos)
             if (!r.ok) continue
             moves++
-            expectClean(r.outline, `把「${from.title}」挪到「${to.title}」的 ${pos} 位之后，`)
+            // ⚑ 点名放行的这两个 code —— 是**一条真实的发现**，不是"断言太严了"。
+            //
+            //   它们的**根因是同一个**：**拖动会让一个节点【变成容器】**
+            //   （拖任何东西到它底下，它就从一个任务变成一个分组），
+            //   而"变成容器"同时改变了 `depends_on` 两端的含义：
+            //
+            //     ① 这个节点**自己**的依赖    → 从此没人读  → W_CONTAINER_DEPS_UNREAD
+            //        例：把「办签证」拖到「预订大阪酒店」底下，后者本来依赖
+            //            「决定出行日期」，那条约束**从此不存在**
+            //     ② **指向它**的那些依赖      → 从此等一个永不执行的分组
+            //                                  → E_DEP_ON_CONTAINER
+            //        例：把「行前准备」拖到「购买旅行保险」底下，而
+            //            「打印行程单」正依赖着它 → 永远等不到
+            //
+            //   ⚠️ 这两个状态在对应校验存在**之前都是完全静默的** ——
+            //      拖动的人看不到任何提示，下游任务永远不动，
+            //      而界面上它就是个普普通通的「待办」（#13）。
+            //
+            //   ⚠️ moveNode **不该**自己修它们：把那些依赖删掉＝静默丢掉约束
+            //      （"打印行程单要等保险办完"就没了），比报错更糟 ✗；
+            //      而替它编一条新依赖更是无中生有 ✗。
+            //      所以只能留着让人看见 —— 而"看得见"正是这两条校验的全部意义。
+            //
+            //   ⚑ 尚未决定的一件事（两处例外指向同一个决定）：要不要让拖动
+            //      **直接拒绝**这种落点 ——「拖一个节点进 X」会让 X 变成容器。
+            //      我倾向不做：拖动是用户在重构，拒绝反而挡路。
+            expectClean(r.outline, `把「${from.title}」挪到「${to.title}」的 ${pos} 位之后，`, [
+              'E_DEP_ON_CONTAINER',
+              'W_CONTAINER_DEPS_UNREAD',
+            ])
           }
         }
       }

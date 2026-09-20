@@ -208,6 +208,28 @@ export function buildTree(outline: OutlineNode[]): BuildResult {
 }
 
 /**
+ * 谁被别人的 `parent_id` 指过，谁就是【容器】—— 不执行的分组。
+ *
+ * ⚑ 判据【只看 `parent_id` 这一个字段】，不看树建出来没有。
+ *   `buildTree` 会把坏节点降级成 `detached`，但"它是不是个分组"和
+ *   "它能不能挂上主树"是两件事 —— 拿树的形状去反推，坏数据上就会
+ *   给不出答案。这里不做任何降级判断，纯读字段。
+ *
+ * ⚠️ 口径一共五处，必须一致（**同一个表达式，别再加第六份**）：
+ *   · 本文件 `validateDependencies()` —— 依赖不许指向容器
+ *   · `lib/summary.ts`        —— 统计"任务数"时排除容器
+ *   · `lib/simulation.ts`     —— 调度器不派发容器
+ *   · Python `app/cli.py` 的 `_containers()`
+ *   · 测试页 `frontend/test.html` 的 `containerIds()`
+ *   两边算法不一致的话，会出现"前端不当任务、后端当任务"的错位 ✗
+ */
+export function containerIds(outline: OutlineNode[]): Set<NodeId> {
+  return new Set(
+    outline.map((n) => n.parent_id).filter((id): id is NodeId => id !== null),
+  )
+}
+
+/**
  * 依赖图校验（§7.2 第 ③ 组）—— 检查 `depends_on`。
  *
  * ⚑ 为什么它和层级校验是两套算法：
@@ -229,9 +251,19 @@ export function buildTree(outline: OutlineNode[]): BuildResult {
  *    依赖图跟层级树能不能连通没有关系，一个孤儿照样可以有依赖。
  */
 function validateDependencies(byId: Map<NodeId, OutlineNode>, issues: StructureIssue[]): void {
-  /* ── ① 悬空依赖 ─────────────────────────────────────────
-   * 每个悬空的引用各报一条，挂在【依赖方】身上 ——
-   * 因为"是谁在等"才是用户要处理的那个节点。 */
+  /* ── ① 依赖指错了目标 ───────────────────────────────────
+   * 两种"指错了"，各报一条，都挂在【依赖方】身上 ——
+   * 因为"是谁在等"才是用户要处理的那个节点。
+   *
+   * ⚑ 两种必须用**不同的 code**（理由见 types/outline.ts 里
+   *   `E_DEP_ON_CONTAINER` 那段）：后果一样，但一边人是【找不到】那个节点，
+   *   另一边人是【找得到】、只是它不是个任务。报混了，人就会去图里白找一圈。
+   *
+   * ⚑ 用 `else if` 不是省事 —— 是**一条依赖只报一条**。
+   *   `containers` 是从 `parent_id` 读出来的，里面可能有个**指向不存在节点**的
+   *   父 id（就是 `E_ORPHAN_PARENT` 那种）。那种 id 假如下面正好也被人
+   *   `depends_on` 了，它两边都占，报两条就成了一件事说两遍。 */
+  const containers = containerIds([...byId.values()])
   for (const n of byId.values()) {
     for (const dep of n.depends_on) {
       if (!byId.has(dep)) {
@@ -241,8 +273,47 @@ function validateDependencies(byId: Map<NodeId, OutlineNode>, issues: StructureI
           code: 'E_DANGLING_DEP',
           message: `depends_on 里的 "${dep}" 不存在 —— 这个任务会永远等下去`,
         })
+      } else if (containers.has(dep)) {
+        // ⚑ 报【标题】而不是 id —— 悬空那条只能报 id（没有节点可取标题），
+        //   而这条有节点，报标题人才认得出是图上的哪一块。
+        issues.push({
+          severity: 'error',
+          node_id: n.id,
+          code: 'E_DEP_ON_CONTAINER',
+          message:
+            `depends_on 指向了「${byId.get(dep)!.title}」—— 那是个分组（容器），` +
+            `不会被执行，所以这个任务会永远等下去。` +
+            `改成依赖那个分组里的具体任务`,
+        })
       }
     }
+  }
+
+  /* ── ①b 容器【自己】写了依赖 ─────────────────────────────
+   * ⚑ 注意这一条和上面**方向相反**：
+   *     上面   "谁**指向**了一个容器"  → E_DEP_ON_CONTAINER
+   *     这里   "容器**自己**有依赖"    → W_CONTAINER_DEPS_UNREAD
+   *
+   *   容器的 `depends_on` **没有任何代码读它** —— 看调度循环：
+   *     simulation.ts:124  if (containers.has(n.id)) continue   ← 容器在这儿就被跳过了
+   *     simulation.ts:126  const depsOk = n.depends_on.every(...)  ← 压根轮不到容器
+   *   容器的状态是【汇总】出来的（rollupStatuses），它自己不执行、也没人看它的依赖。
+   *
+   *   于是模型写下的"**整组要等 X**"**从此不存在** ✗ —— 而图上什么异常都没有。
+   *   这是 #13 的又一种形状：丢的不是任务，是一条**约束**。
+   *
+   * ⚠️ 报 warning 不报 error：它不制造死锁（容器不派发，孩子们有自己的依赖），
+   *    所以不该拦住整张图（§7.1 的闸门只管 error）。 */
+  for (const n of byId.values()) {
+    if (!containers.has(n.id) || n.depends_on.length === 0) continue
+    issues.push({
+      severity: 'warning',
+      node_id: n.id,
+      code: 'W_CONTAINER_DEPS_UNREAD',
+      message:
+        `「${n.title}」是个分组（容器），它自己的 depends_on 没有人读 —— ` +
+        `这条约束不会生效。要表达"整组要等 X"，就让组里每个任务都依赖 X`,
+    })
   }
 
   /* ── ② 依赖环 ───────────────────────────────────────────
@@ -334,10 +405,15 @@ function validateDependencies(byId: Map<NodeId, OutlineNode>, issues: StructureI
  *   显示 running 会让人以为一切正常。**把异常顶到用户眼前是这项目的产品立场**
  *   （和"坏数据显式显示不静默丢弃"是同一条原则）。
  *
- *   **为什么 skipped 算已了结**：skipped 只应来自「用户有意放弃」
- *   或「从用户放弃级联而来」（见 simulation.ts）。既然是人接受的，
+ *   **为什么 skipped 算已了结**：`skipped` 只应来自**人的决定** ——
+ *   用户点了「我也放弃」（`abandonNode()`），或对失败的任务选了「不处理」
+ *   （`handleFailure(..., 'discard')`）。既然是人接受的，
  *   父节点就该算完成 —— 但注意【完成度百分比仍按 done 计】，
  *   "了结了"和"都做完了"不是同一件事，两个数字都真实。
+ *
+ *   ⚠️ 2026-09-20 之前这里还有第三个来源：「从用户放弃**级联**而来」。
+ *     那条已经删掉了 —— 上游被放弃**不等于**下游也该放弃，
+ *     现在下游停在「待你决定」，等用户自己说了算（见 simulation.ts）。
  */
 export function combineStatus(children: NodeStatus[]): NodeStatus {
   if (children.length === 0) return 'todo'
