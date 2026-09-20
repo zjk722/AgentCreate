@@ -38,6 +38,7 @@
 """
 
 import argparse
+import hashlib
 import io
 import json
 import sys
@@ -50,6 +51,21 @@ from app.workflows.plan import plan_goal
 EVALS_DIR = Path(__file__).resolve().parent
 CORPUS = EVALS_DIR / "corpus.json"
 BASELINE = EVALS_DIR / "baseline.json"
+
+
+def corpus_fingerprint() -> str:
+    """`corpus.json` 的指纹 —— 用来判断「这份基线是不是针对当前断言跑的」。
+
+    ⚑ 为什么需要它：改了断言（关键词 / node_count / limits）之后，
+      旧基线**不能再用来判退化** —— 它量的是**另一把尺子**。
+
+      而没有指纹的话，这一点**看不出来**：基线文件里只有通过次数，
+      没有"它是按哪版断言跑出来的"。于是你会拿一份不可比的东西去比，
+      得到一个**假的退化**报告。
+
+      ⚑ 那正是 #13 的形状：**它不报错，只是给你一个错的结论。**
+    """
+    return hashlib.sha256(CORPUS.read_bytes()).hexdigest()[:12]
 
 # 每条种子跑几次。12 颗 × 5 = 60 —— 正好是 §12 给 A1 写的"60 条用例"。
 RUNS = 5
@@ -386,7 +402,29 @@ def main() -> int:
 
     baseline = None
     if BASELINE.exists():
-        baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
+        raw = json.loads(BASELINE.read_text(encoding="utf-8"))
+        stale = raw.get("corpus") != corpus_fingerprint()
+
+        if stale and not args.update_baseline:
+            # 要拿它比 → **拒绝**。见 corpus_fingerprint 的说明。
+            print("❌ 这份基线是针对【另一版 corpus】跑的，**不能**拿来判退化。")
+            print(f"   基线里记的: {raw.get('corpus')}    当前 corpus: {corpus_fingerprint()}")
+            print()
+            print("   改了断言（关键词 / node_count / limits）之后，旧基线量的是另一把尺子")
+            print("   —— 拿它比会得到一个【假的退化】。")
+            print("   要么删掉 baseline.json 重跑，要么跑 `ARGS=--update-baseline` 接受新成绩。")
+            return 2
+
+        if stale:
+            # ⚑ 要**接受新成绩** → 旧基线**不拦，但不合并**。
+            #   拦的话就等于"报错让你去做一件它自己不允许的事"（这个 bug 真发生过）。
+            #   不合并是因为它量的是另一把尺子 —— 合并进来等于把旧断言的成绩
+            #   混进新基线里，而**从文件里看不出来**。
+            print("⚠️ 旧基线是针对【另一版 corpus】的 —— 这次【不合并】它。")
+            print("   所以这次没跑到的种子，在新基线里会是**缺的**；等它们跑一次就补上。")
+            print()
+        else:
+            baseline = raw.get("seeds") or {}
 
     try:
         results = [run_seed(s, args.runs) for s in seeds]
@@ -412,7 +450,14 @@ def main() -> int:
         for r in results:
             merged[r["id"]] = {"pass": r["passed"], "tier": r["tier"]}
         BASELINE.write_text(
-            json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            # ⚑ 连**指纹**一起写 —— 下次跑的时候先比它，对不上就拒绝拿来比（见 corpus_fingerprint）
+            json.dumps(
+                {"corpus": corpus_fingerprint(), "seeds": merged},
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
         )
         print()
         print(f"✅ 基线已更新（{BASELINE.name}）—— 以后就跑它对比。")
