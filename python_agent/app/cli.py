@@ -151,7 +151,6 @@ def _report(result: PlanResult) -> None:
     print()
     print("注：标着【容器】的是分组，不是任务 —— 它们不会被派发执行。")
     print("注：assignee 是【提议】不是决定（ADR-2），归属要等 Java 的 Policy 裁决（§5.1 的 ② 步）。")
-    print("注：依赖抽取（planner/deps.py）还没做，所以上面没有「← 依赖」那一截。")
 
 
 def main() -> int:

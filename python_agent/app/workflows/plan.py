@@ -21,6 +21,7 @@ from typing import Any
 from app.domain.validation import validate_generated
 from app.llm.client import PlanCallError, call_json
 from app.llm.prompts import build_messages
+from app.planner.deps import resolve_depends
 from app.planner.outline import LevelSkipError, assemble
 from app.tools.registry import load_tools
 
@@ -62,6 +63,14 @@ def plan_goal(goal: str, *, max_depth: int = 3, max_children: int = 9) -> PlanRe
         nodes = assemble(level_nodes)
     except LevelSkipError:
         nodes = []
+
+    # ⑤ 依赖解析：模型的【标题】依赖 → 【id】依赖
+    # ⚑ 必须在组装**之后** —— 组装之前没有 id，而"标题 → id"的字典建不出来 ✓
+    #
+    #   装不出树时不解析（图是空的，没有"依赖"可言）——
+    #   而那种情况已经被 E_LEVEL_SKIP 报成阻断性问题了 ✓
+    if nodes:
+        resolve_depends(level_nodes, nodes)
 
     return PlanResult(
         goal=goal,
