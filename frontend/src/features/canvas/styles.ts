@@ -76,9 +76,26 @@ export const ASSIGNEE_LABEL: Record<Assignee, string> = {
 
 /* ── approval：独立 chip ──────────────────────────────────── */
 
-export interface ApprovalChip {
+export interface Chip {
   label: string
   className: string
+}
+
+/**
+ * 「等你拍板」—— 上游被放弃了，这件事还做不做由你定。
+ *
+ * ⚑ 它占的是**审批那条通道**（一块独立 chip），不是 status 的颜色。
+ *   理由和审批一样：它**不是生命周期的一步** —— 存储里这个节点还是
+ *   `todo`，只是"没人决定要不要往前走"。把它染成一种新的 status 颜色，
+ *   会让每一处读 `status` 的代码都被迫理解这套语义（§4.2 的三轴正交）。
+ *
+ * ⚑ 用审批那档琥珀色是有意的：**两者问的是同一类问题**（"等你"），
+ *   只是问的东西不同 —— 一个问"准不准做"，一个问"还做不做"。
+ *   颜色相同、文字不同，读起来是同一个家族。
+ */
+export const AWAITING_DECISION_CHIP: Chip = {
+  label: '等你拍板',
+  className: 'bg-approve-once-soft text-approve-once',
 }
 
 /**
@@ -103,7 +120,7 @@ export interface ApprovalChip {
  */
 export const ENTER_STAGGER_MS = 90
 
-export function approvalChip(approval: Approval | null | undefined): ApprovalChip | null {
+export function approvalChip(approval: Approval | null | undefined): Chip | null {
   if (!approval) return null
 
   if (approval.status === 'pending') {

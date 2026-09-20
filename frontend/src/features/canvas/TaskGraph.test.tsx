@@ -15,6 +15,7 @@ import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { datasets } from '../../mocks'
 import { node } from '../../mocks/_helper'
+import type { OutlineNode } from '../../types/outline'
 import { TaskGraph } from './TaskGraph'
 
 describe('TaskGraph · 渲染冒烟', () => {
@@ -33,6 +34,55 @@ describe('TaskGraph · 渲染冒烟', () => {
       }
     })
   }
+
+  /**
+   * ⚑ 上游被放弃之后，**卡片上要看得出来**。
+   *
+   *   为什么这条非测不可：少了这个角标，那张卡在图上和一张普通待办
+   *   **长得一模一样** —— 而画布恰恰是"决定点开哪个节点"的那张脸。
+   *   用户不会去点一张没有疑问的卡，也就走不到那两处说清楚的地方。
+   */
+  describe('「等你拍板」的角标', () => {
+    /** 保险被放弃、行程单在等 —— 就是 A′ 那个场景 */
+    const outline: OutlineNode[] = [
+      node('r', null, 0, '根', { status: 'done' }),
+      node('ins', 'r', 0, '买保险', { status: 'skipped' }),
+      node('print', 'r', 1, '打印行程单', { status: 'todo', depends_on: ['ins'] }),
+    ]
+
+    it('⚑ 卡片上直接写出「等你拍板」', () => {
+      expect(renderToString(<TaskGraph outline={outline} />)).toContain('等你拍板')
+    })
+
+    it('⚠️ 普通待办【不】带这个角标', () => {
+      const clean: OutlineNode[] = [
+        node('r', null, 0, '根', { status: 'done' }),
+        node('t', 'r', 0, '普通待办', { status: 'todo' }),
+      ]
+      expect(renderToString(<TaskGraph outline={clean} />)).not.toContain('等你拍板')
+    })
+
+    it('豁免之后就恢复正常了', () => {
+      const waived: OutlineNode[] = [
+        node('r', null, 0, '根', { status: 'done' }),
+        node('ins', 'r', 0, '买保险', { status: 'skipped' }),
+        node('print', 'r', 1, '打印行程单', {
+          status: 'todo',
+          depends_on: ['ins'],
+          waived_deps: ['ins'],
+        }),
+      ]
+      expect(renderToString(<TaskGraph outline={waived} />)).not.toContain('等你拍板')
+    })
+
+    it('⚑ 无障碍：屏幕阅读器也要读得到', () => {
+      // 卡片是个 <button>，aria-label 是屏幕阅读器唯一的入口。
+      // 「角标/颜色不能是唯一的信息载体」这条原则，对辅助技术同样成立。
+      expect(renderToString(<TaskGraph outline={outline} />)).toContain(
+        '打印行程单，待办，Agent，等你拍板',
+      )
+    })
+  })
 
   it('空 outline 不崩溃', () => {
     expect(() => renderToString(<TaskGraph outline={[]} />)).not.toThrow()

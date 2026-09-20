@@ -55,6 +55,49 @@ function render(
   )
 }
 
+/* ── 上游被放弃之后（详情面板这一处入口）──────────────────── */
+
+/**
+ * ⚑ 对话区的待办列表和这里共用同一套语义（`handleNodeAction` 一个处理函数）。
+ *   所以**两处都要被断言** —— 只测一处的话，另一处被人顺手改坏没人会知道，
+ *   而用户在哪一处先看到问题是不确定的。
+ */
+describe('DetailPanel · 上游被放弃之后', () => {
+  const outline: OutlineNode[] = [
+    node('r', null, 0, '根', { status: 'done' }),
+    node('ins', 'r', 0, '买保险', { status: 'skipped' }),
+    node('print', 'r', 1, '打印行程单', { status: 'todo', depends_on: ['ins'] }),
+  ]
+
+  it('⚑ 说出处境，并且【两个出口都给】', () => {
+    const html = render(outline, 'print')
+    expect(html).toContain('上游已放弃')
+    expect(html).toContain('这个照做')
+    expect(html).toContain('我也放弃')
+  })
+
+  it('普通待办不该出现这两个按钮', () => {
+    const clean: OutlineNode[] = [
+      node('r', null, 0, '根', { status: 'done' }),
+      node('t', 'r', 0, '普通待办', { status: 'todo' }),
+    ]
+    expect(render(clean, 't')).not.toContain('这个照做')
+  })
+
+  it('豁免之后按钮收起来', () => {
+    const waived: OutlineNode[] = [
+      node('r', null, 0, '根', { status: 'done' }),
+      node('ins', 'r', 0, '买保险', { status: 'skipped' }),
+      node('print', 'r', 1, '打印行程单', {
+        status: 'todo',
+        depends_on: ['ins'],
+        waived_deps: ['ins'],
+      }),
+    ]
+    expect(render(waived, 'print')).not.toContain('这个照做')
+  })
+})
+
 /**
  * 取出含指定文字的那个按钮标签。
  *
