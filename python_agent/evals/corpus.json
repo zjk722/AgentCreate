@@ -3,10 +3,10 @@
     "id": "seed-02",
     "tier": "green",
     "goal": "帮我规划一次日本关西七日游",
-    "limits": { "max_depth": 3, "max_children": 6 },
+    "limits": { "max_depth": 3, "max_children": 9 },
     "structure": {
       "allowed_warnings": [],
-      "node_count": { "min": 3, "max": 15 }
+      "node_count": { "min": 10, "max": 20 }
     },
     "distribution": {
       "agent": { "min": 1 },
@@ -16,9 +16,13 @@
       "must_contain": [
         ["机票", "航班"],
         ["酒店"],
-        ["汇率"],
+        ["汇率","日元"],
         ["签证"],
-        ["保险"]
+        ["保险"],
+        ["行程"],
+        ["日期"],
+        ["信息"],
+        ["人数"]
       ],
       "min_hit_rate": 0.66
     },
@@ -29,10 +33,10 @@
     "id": "seed-03",
     "tier": "green",
     "goal": "帮我规划一次关西七日游",
-    "limits": { "max_depth": 3, "max_children": 6 },
+    "limits": { "max_depth": 3, "max_children": 9 },
     "structure": {
       "allowed_warnings": [],
-      "node_count": { "min": 3, "max": 15 }
+      "node_count": { "min": 12, "max": 23 }
     },
     "distribution": {
       "agent": { "min": 1 },
@@ -42,10 +46,10 @@
       "must_contain": [
         ["机票", "航班"],
         ["酒店"],
-        ["汇率"],
-        ["签证"],
         ["保险"],
-        ["出国","你的位置"]
+        ["信息"],
+        ["人数"],
+        ["日期"]
       ],
       "min_hit_rate": 0.66
     },
@@ -63,7 +67,7 @@
     },
     "distribution": {
       "agent": { "min": 1 },
-      "user": { "max": 0 }
+      "user": { "max": 4 }
     },
     "coverage": {
       "must_contain": [
