@@ -20,15 +20,19 @@ import type { MapSummary, PendingTodo } from '../../lib/summary'
 import { ASSIGNEE_BORDER_STYLE } from '../canvas/styles'
 
 /**
- * 四种待办的语气。与画布共用同一套线型语言，让"虚线 = 归你"在这里也成立。
+ * 五种待办的语气。与画布共用同一套线型语言，让"虚线 = 归你"在这里也成立。
  *
- * ⚑ `failed` 排在第一位，因为它是唯一一个【需要人做判断】的组 ——
- *   其余三组都是"知道该干什么，只是还没干"。这组是"还没人决定要不要干"。
+ * ⚑ 前两组排在前面，因为它们是**仅有的两类需要人做判断**的组 ——
+ *   其余三组都是"知道该干什么，只是还没干"。那两组是"**还没人决定要不要干**"。
+ *   （⚠️ 这句话原来写的是"唯一一个" —— 加了 `decision` 之后它就假了。）
  */
-type Tone = 'failed' | 'approval' | 'user' | 'blocked'
+type Tone = 'failed' | 'decision' | 'approval' | 'user' | 'blocked'
 
 const TONE: Record<Tone, { border: Assignee | null; title: string; dot: string }> = {
   failed: { border: 'agent', title: '需要你决定', dot: 'border-red-500' },
+  // ⚑ 线型用 `agent`：它等的**不是人动手**，而是"这件 Agent 的事还做不做"。
+  //   和 failed 一样，归属那根线不是重点，重点是这一组要被顶到眼前。
+  decision: { border: 'agent', title: '上游不做了，等你拍板', dot: 'border-amber-500' },
   approval: { border: null, title: '等你点头', dot: 'border-amber-400' },
   user: { border: 'user', title: '需要你做', dot: 'border-slate-500' },
   blocked: { border: 'blocked', title: '卡住了', dot: 'border-red-400' },
@@ -74,6 +78,7 @@ export function AgentMessage({
 
       <div className="space-y-2.5 px-3 py-2.5">
         <TodoGroup tone="failed" todos={summary.failedTasks} onItemAction={onItemAction} />
+        <TodoGroup tone="decision" todos={summary.awaitingDecision} onItemAction={onItemAction} />
         <TodoGroup tone="approval" todos={summary.awaitingApproval} onItemAction={onItemAction} />
         <TodoGroup tone="user" todos={summary.userTodos} onItemAction={onItemAction} />
         <TodoGroup tone="blocked" todos={summary.blockers} onItemAction={onItemAction} />
@@ -175,10 +180,11 @@ function TodoItem({
       </span>
 
       {/* 逐条操作。
-       *  ⚑ 三组各有各的两条路，而且【都必须给两条】：
-       *    · 审批：批准 / 否决 —— "只能同意"不是审批，是通知
+       *  ⚑ 每一组都【必须给两条】—— 只给一条就不是"选择"，是"通知"：
+       *    · 审批：批准 / 否决 —— "只能同意"不是审批
        *    · 失败：我来处理 / 不处理 —— 系统不替用户判断还值不值得做
-       *    · 其余：完成 */}
+       *    · 上游被放弃：这个照做 / 我也放弃 —— 系统同样不替用户判断
+       *      "上游不做了，我还做不做" */}
       <span className="flex shrink-0 gap-1">
         {tone === 'approval' && (
           <>
@@ -193,6 +199,14 @@ function TodoItem({
             <Mini onClick={() => onAction(todo.id, 'handle')}>我来处理</Mini>
             <Mini onClick={() => onAction(todo.id, 'discard')} danger>
               不处理
+            </Mini>
+          </>
+        )}
+        {tone === 'decision' && (
+          <>
+            <Mini onClick={() => onAction(todo.id, 'waive')}>这个照做</Mini>
+            <Mini onClick={() => onAction(todo.id, 'abandon')} danger>
+              我也放弃
             </Mini>
           </>
         )}

@@ -15,6 +15,7 @@ import {
   approve,
   approveAll,
   awaitingDecisionIds,
+  blockingDepsOf,
   completeNode,
   handleFailure,
   markUserTasksDone,
@@ -305,6 +306,23 @@ describe('上游被放弃之后 · 两个出口', () => {
     for (const [label, n] of cases) {
       expect(abandonNode([n], 'a')[0].status, label).toBe(n.status)
     }
+  })
+
+  it('⚑ blockingDepsOf 只说【还没豁免的】那几条', () => {
+    // ⚑ 这就是界面点「这个照做」时豁的那几条 —— 两个入口（对话区 + 详情面板）
+    //   都调它，而不是各自从 depends_on 里筛一遍。各筛一遍早晚会筛出分歧。
+    const outline = [
+      node('a', null, 0, '甲', { status: 'skipped' }),
+      node('b', null, 1, '乙', { status: 'skipped' }),
+      node('c', null, 2, '丙', { status: 'done' }),
+      node('t', null, 3, '丁', { status: 'todo', depends_on: ['a', 'b', 'c'] }),
+    ]
+    // 只有被放弃的算「挡着」—— 已完成的丙不算，尽管它也在 depends_on 里
+    expect(blockingDepsOf(outline, 't')).toEqual(['a', 'b'])
+    // 豁掉一条，就只剩另一条
+    expect(blockingDepsOf(waiveDeps(outline, 't', ['a']), 't')).toEqual(['b'])
+    // 找不到的节点安静返回空 —— 界面可能在数据换掉之后还拿着旧 id
+    expect(blockingDepsOf(outline, '不存在')).toEqual([])
   })
 
   it('豁免过的 id 过期了（那个节点后来被删了）→ 不报错、也不影响', () => {

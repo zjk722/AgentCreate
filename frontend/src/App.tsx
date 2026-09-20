@@ -27,13 +27,16 @@ import { ChatPanel } from './features/chat/ChatPanel'
 import { buildTree, hasBlockingIssue, rollupStatuses } from './lib/outline'
 import { deleteNode, moveNode, type DeleteMode, type DropPosition } from './lib/outlineEdit'
 import {
+  abandonNode,
   advance,
   approve,
   approveAll,
+  blockingDepsOf,
   completeNode,
   handleFailure,
   markUserTasksDone,
   rejectNode,
+  waiveDeps,
   type ExecutionPlan,
   type NodeAction,
 } from './lib/simulation'
@@ -196,17 +199,28 @@ export default function App() {
    *   就能在哪儿解决它，不必先去另一个区域找到对应的那一条。
    */
   function handleNodeAction(nodeId: string, action: NodeAction) {
-    const next =
-      action === 'approve'
-        ? approve(outline, nodeId)
-        : action === 'reject'
-          ? rejectNode(outline, nodeId)
-          : action === 'handle'
-            ? handleFailure(outline, nodeId, 'handle')
-            : action === 'discard'
-              ? handleFailure(outline, nodeId, 'discard')
-              : completeNode(outline, nodeId)
-    applyUserAction(next)
+    // ⚑ 用 switch 而不是嵌套三元：动作已经有 7 个了，三元链读到第四个就得数缩进。
+    //   而**漏掉一个分支在这里是静默的** —— 那一条会被当成最后的 else，
+    //   去做一件完全不相干的事（比如把「我也放弃」执行成「标记完成」✗）。
+    //   switch 至少让漏掉的那个看起来像漏掉了。
+    switch (action) {
+      case 'approve':
+        return applyUserAction(approve(outline, nodeId))
+      case 'reject':
+        return applyUserAction(rejectNode(outline, nodeId))
+      case 'handle':
+        return applyUserAction(handleFailure(outline, nodeId, 'handle'))
+      case 'discard':
+        return applyUserAction(handleFailure(outline, nodeId, 'discard'))
+      case 'waive':
+        // ⚑ 豁免哪几条由 lib 算（`blockingDepsOf`）—— 两个入口各算一遍
+        //   早晚会算出分歧，那时两个界面会给出不一样的两条待豁免
+        return applyUserAction(waiveDeps(outline, nodeId, blockingDepsOf(outline, nodeId)))
+      case 'abandon':
+        return applyUserAction(abandonNode(outline, nodeId))
+      case 'complete':
+        return applyUserAction(completeNode(outline, nodeId))
+    }
   }
 
   /**
