@@ -112,8 +112,18 @@
 
             // ⚑ 依赖**必须显示** —— 「这个 agent 任务要不要等用户」就写在这里。
             //   `assignee` 说的是"谁**执行**"，不是"要不要**问用户**" —— 那是两件事。
+            //
+            // ⚠️ **这里不能用 `n.depends_on ?? []`** —— 那会把两种情况显示成一样：
+            //   · **缺这个键** → 后端还在跑旧代码（依赖解析没上线）
+            //   · `[]`       → 模型明确说"我不依赖谁"
+            //   而**区分这两件事正是 `deps.py` 整个模块存在的理由** ✓
+            //   （它们显示成一样，就会像那次一样：**看不出是后端跑错代码了** ✗）
             const deps = (n.depends_on ?? []).map((d) => byId.get(d)?.title ?? d)
-            const depTxt = deps.length ? `  ← 依赖: ${deps.join('、')}` : ''
+            const depTxt = !('depends_on' in n)
+              ? '  ← ⚠️ 没有 depends_on 字段'
+              : deps.length
+                ? `  ← 依赖: ${deps.join('、')}`
+                : ''
 
             lines.push(`${prefix}${last ? '└─ ' : '├─ '}${n.title}  [${who}]${depTxt}`)
             walk(n.id, prefix + (last ? '   ' : '│  '))
@@ -191,6 +201,22 @@
           for (const i of body.issues) {
             html += `<div class="warn ${i.severity === 'error' ? 'red' : 'amber'}">` +
               `${i.severity === 'error' ? '🔴' : '🟡'} <code>${esc(i.code)}</code> ${esc(i.message)}</div>`
+          }
+
+          // ⚑ 整体检查：**一个节点都没有** `depends_on` 字段。
+          //
+          //   那不像"模型没写"，而更像**后端跑的是旧代码** ✗
+          //   —— 真发生过：改完 python 之后，uvicorn 的 `--reload` **不会干净地杀掉旧 worker**，
+          //      于是两个进程抢同一个端口（Windows 允许这样 ✗），请求**随机**落到旧的那个 ✓
+          //      → 表现是"有时候有依赖、有时候没有"，而**页面上看不出区别**（#13 的形状）
+          const missing = body.nodes.filter((n) => !('depends_on' in n)).length
+          if (body.nodes.length > 0 && missing === body.nodes.length) {
+            html +=
+              '<div class="warn amber">⚠️ <b>所有</b>节点都没有 <code>depends_on</code> 字段 —— ' +
+              '这不像"模型没写"，更像<b>后端跑的是旧代码</b> ✗<br>' +
+              '（uvicorn 的 <code>--reload</code> 改完代码后有时<b>不杀旧的 worker</b>，' +
+              '于是两个进程抢同一个端口 → 请求随机落到旧的那个）<br>' +
+              '→ <b>重启后端</b>最省事（顺带 <code>netstat -ano | findstr :8000</code> 看看有几个在听）</div>'
           }
 
           // ⚑ 依赖指向【容器】= 那个任务**永远等不到** ✓
