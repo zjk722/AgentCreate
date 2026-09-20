@@ -3,7 +3,7 @@
 # ⚠️ 这里只放【已经能用】的目标。
 #    空的目标比没有目标更糟：它会让人以为那件事已经做过了 ——
 #    这正是 #13（静默失败）在工具链上的形态。
-#    所以 migrate / gen-api / test / eval 现在【故意不在】这里：它们还没东西可指。
+#    所以 migrate / gen-api 现在【故意不在】这里：它们还没东西可指。
 #
 # 用法：
 #     make plan GOAL="准备一次日本关西七日游"
@@ -22,7 +22,7 @@ GOAL ?= 准备一次日本关西七日游
 #   `export` 是 make 层的事，**与 shell 无关**，两边都能用。
 export PYTHONIOENCODING = utf-8
 
-.PHONY: help plan prompt test eval serve
+.PHONY: help plan prompt test eval serve web
 
 help:
 	@echo 'make plan GOAL="..."   目标 → 任务图骨架（调真模型；Prompt 没写会明确报错）'
@@ -30,7 +30,9 @@ help:
 	@echo 'make test               Python 侧的测试'
 	@echo 'make eval               A1 评测跑批（会花钱调模型；退化时非零退出码）'
 	@echo 'make eval ARGS="--only seed-03"   只跑一条种子（省 2/3 的调用）'
-	@echo 'make serve              起 HTTP 服务（§3.4 的 /v1/plan，端口 8000）'
+	@echo 'make serve              起后端（§3.4 的 /v1/plan，端口 8000）'
+	@echo 'make web                起前端（Vite，端口 5173；第一次先 npm install）'
+	@echo '                        ⚑ 前后端是【两个终端】各跑一条 —— 见下面说明'
 
 # ⚑ PYTHONIOENCODING=utf-8 不是装饰：Windows 控制台的默认代码页不是 UTF-8，
 #   不设它的话 pytest 报告里的中文会变成乱码 —— 而**失败时最需要读的正是那几行**。
@@ -51,7 +53,19 @@ test:
 eval:
 	@cd python_agent && uv run python -m evals.runner $(ARGS)
 
-# 起 HTTP 服务 —— §3.4 的 /v1/plan。
+# 起后端 HTTP 服务 —— §3.4 的 /v1/plan。
 # ⚠️ 开发用（`--reload`）；而且它**只在本地可达**，不暴露公网（§9.4）。
 serve:
 	@cd python_agent && uv run uvicorn app.main:app --reload --port 8000
+
+# 起前端（Vite dev server，端口 5173）。
+#
+# ⚑ 它和 `make serve` 是【两个终端里的两条命令】—— **故意不合成一条**：
+#   两个前台服务的日志混在一个终端里，"出 500 时先看那个终端的日志"就用不了了。
+#
+#   ⚠️ 也**不要**改成"后台起一个"：`&` / `start` 那套写法在 cmd 和 sh 里不一样 ——
+#      又是一个跨 shell 的坑，和上面 `PYTHONIOENCODING` 那个是同一类。
+#
+# 第一次要先 `cd frontend && npm install`。
+web:
+	@cd frontend && npm run dev
