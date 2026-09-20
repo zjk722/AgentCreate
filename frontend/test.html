@@ -84,7 +84,14 @@
       }
 
       /** 扁平数组 → 缩进文本树（照 parent_id / order 走，和后端组装的规则一致）。 */
+      /** 容器 = 有孩子的那种节点（和后端 CLI / 前端 summarize 用同一个判据）。 */
+      function containerIds(nodes) {
+        return new Set(nodes.map((n) => n.parent_id).filter(Boolean))
+      }
+
       function renderTree(nodes) {
+        const byId = new Map(nodes.map((n) => [n.id, n]))
+        const containers = containerIds(nodes)
         const kids = new Map()
         for (const n of nodes) {
           const k = n.parent_id ?? '(root)'
@@ -98,8 +105,17 @@
           const list = kids.get(key) ?? []
           list.forEach((n, i) => {
             const last = i === list.length - 1
-            const tool = n.proposed_tool ? ` · ${n.proposed_tool}` : ''
-            lines.push(`${prefix}${last ? '└─ ' : '├─ '}${n.title}  [${n.assignee}${tool}]`)
+            // 容器不是任务，不显示 assignee / 工具（和后端 CLI 的输出一致）
+            const who = containers.has(n.id)
+              ? '容器'
+              : `${n.assignee}${n.proposed_tool ? ' · ' + n.proposed_tool : ''}`
+
+            // ⚑ 依赖**必须显示** —— 「这个 agent 任务要不要等用户」就写在这里。
+            //   `assignee` 说的是"谁**执行**"，不是"要不要**问用户**" —— 那是两件事。
+            const deps = (n.depends_on ?? []).map((d) => byId.get(d)?.title ?? d)
+            const depTxt = deps.length ? `  ← 依赖: ${deps.join('、')}` : ''
+
+            lines.push(`${prefix}${last ? '└─ ' : '├─ '}${n.title}  [${who}]${depTxt}`)
             walk(n.id, prefix + (last ? '   ' : '│  '))
           })
         }
@@ -175,6 +191,27 @@
           for (const i of body.issues) {
             html += `<div class="warn ${i.severity === 'error' ? 'red' : 'amber'}">` +
               `${i.severity === 'error' ? '🔴' : '🟡'} <code>${esc(i.code)}</code> ${esc(i.message)}</div>`
+          }
+
+          // ⚑ 依赖指向【容器】= 那个任务**永远等不到** ✓
+          //
+          //   容器的状态是"汇总"出来的，**存储里没人写它** —— 所以它永远不会变成 done ✓
+          //   而 §7.2 ③ 现有的两条校验（成环 / 悬空）**都抓不到这个** ✗
+          //   （它不是环：父→子是树的边；也不悬空：那个 id 确实存在）
+          //
+          //   → 所以这里把它**摆出来** —— 不然图上看不出任何异常（#13 的形状）
+          const containers = containerIds(body.nodes)
+          const badDeps = body.nodes.filter((n) =>
+            (n.depends_on ?? []).some((d) => containers.has(d)),
+          )
+          if (badDeps.length) {
+            html +=
+              `<div class="warn amber">⚠️ 有 <b>${badDeps.length}</b> 个任务的依赖指向了<b>容器</b>：` +
+              `${badDeps.map((n) => esc(n.title)).join('、')}<br>` +
+              '容器的状态是「汇总」出来的、没人写它 → 那条依赖<b>永远满足不了</b>，' +
+              '那些任务会<b>永远等着</b> —— 而图上看不出任何异常。<br>' +
+              '⚑ 这是一处<b>待定的缺口</b>：要么校验里禁掉「依赖容器」，' +
+              '要么定义容器「算完成」的语义。</div>'
           }
 
           // ⚑ 校验没实现时**必须显示** —— 不然"0 个 issue"会被读成"校验通过"
