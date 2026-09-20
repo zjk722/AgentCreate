@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>真跑测试 · 任务图骨架</title>
+    <!--
+      ⚠️ 这是【脚手架】，只存在于 `test-frontend` 分支上 —— 用完就删。
+
+      唯一目的：在页面上输一个目标，**亲眼看真模型拆出来的图**。
+
+      ⚑ 为什么用裸 HTML，而不是接进 React 应用：
+         React 那边要加 api/client.ts、改 App.tsx 的编排、处理 401 / 409 / 串行保存队列
+         —— 那些是 A6 的活（INTEGRATION.md §6 已经算过账："实打实的工作"）。
+         而这个页面的目的只是"看一眼"，所以它**故意不复用任何东西**，
+         也就**不会欠下任何债**：删掉它就是一个文件的事。
+
+      ⚑ 它连的是 Python 引擎（靠 Vite 代理 `/v1` → localhost:8000）。
+         目标架构里前端**只跟 Java 说话** —— 所以这个代理和这个页面都是临时的。
+
+      ⚑ 一个刻意的设计：**先 ping /health**。
+         不然"后端没起来"和"模型调用失败"在页面上长得一样，
+         而那两件事的修法完全相反（一个去 make serve，一个去看 key / 网络 / Prompt）。
+    -->
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0; padding: 20px 24px;
+        font: 14px/1.6 ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+        color: #0f172a; background: #f8fafc;
+      }
+      h1 { font-size: 15px; margin: 0 0 4px; }
+      .sub { color: #64748b; font-size: 12px; margin-bottom: 14px; }
+      .row { display: flex; gap: 8px; align-items: flex-start; }
+      textarea {
+        flex: 1; padding: 8px 10px; font: inherit; font-size: 13px; resize: vertical;
+        min-height: 60px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff;
+      }
+      button {
+        padding: 8px 16px; font: inherit; font-size: 13px; cursor: pointer;
+        border: 0; border-radius: 6px; background: #0f172a; color: #fff; white-space: nowrap;
+      }
+      button:disabled { opacity: .4; cursor: not-allowed; }
+      #health { font-size: 12px; margin: 10px 0 4px; }
+      .ok { color: #15803d; } .bad { color: #b91c1c; }
+      .card {
+        margin-top: 14px; padding: 12px 14px; background: #fff;
+        border: 1px solid #e2e8f0; border-radius: 8px;
+      }
+      .meta { font-size: 12px; color: #475569; }
+      .meta b { color: #0f172a; }
+      pre { margin: 8px 0 0; font-size: 12.5px; line-height: 1.5; white-space: pre; overflow-x: auto; }
+      .warn { margin-top: 10px; padding: 8px 10px; border-radius: 6px; font-size: 12.5px; }
+      .warn.red { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+      .warn.amber { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+      .warn.note { background: #f1f5f9; border: 1px solid #e2e8f0; color: #475569; }
+      code { font-family: ui-monospace, Consolas, monospace; }
+    </style>
+  </head>
+  <body>
+    <h1>真跑测试 · 目标 → 任务图骨架</h1>
+    <p class="sub">
+      ⚠️ 这是脚手架（<code>test-frontend</code> 分支）：它直连 Python 引擎，
+      拿回来的是<b>规划器的提议</b>，<b>未经 Policy 裁决</b> —— 缺工具的节点在这里仍显示 agent。
+    </p>
+
+    <div class="row">
+      <textarea id="goal">帮我规划一次关西七日游</textarea>
+      <button id="go">真跑一次</button>
+    </div>
+    <div id="health">正在检查后端…</div>
+    <div id="out"></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id)
+      const out = $('out')
+      const go = $('go')
+
+      // 同一个目录下的后端路径 —— Vite 代理会把它转到 localhost:8000
+      const API = '/v1/plan'
+
+      function esc(s) {
+        return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+      }
+
+      /** 扁平数组 → 缩进文本树（照 parent_id / order 走，和后端组装的规则一致）。 */
+      function renderTree(nodes) {
+        const kids = new Map()
+        for (const n of nodes) {
+          const k = n.parent_id ?? '(root)'
+          if (!kids.has(k)) kids.set(k, [])
+          kids.get(k).push(n)
+        }
+        for (const list of kids.values()) list.sort((a, b) => a.order - b.order)
+
+        const lines = []
+        const walk = (key, prefix) => {
+          const list = kids.get(key) ?? []
+          list.forEach((n, i) => {
+            const last = i === list.length - 1
+            const tool = n.proposed_tool ? ` · ${n.proposed_tool}` : ''
+            lines.push(`${prefix}${last ? '└─ ' : '├─ '}${n.title}  [${n.assignee}${tool}]`)
+            walk(n.id, prefix + (last ? '   ' : '│  '))
+          })
+        }
+        walk('(root)', '')
+        return lines.join('\n')
+      }
+
+      async function checkHealth() {
+        try {
+          const r = await fetch('/health')
+          if (!r.ok) throw new Error(r.status)
+          $('health').innerHTML = '<span class="ok">✓ 后端在（localhost:8000）</span>'
+        } catch {
+          $('health').innerHTML =
+            '<span class="bad">✗ 后端没起来</span> —— 先在另一个终端跑 <code>make serve</code>' +
+            '<br><span class="sub">（这一步就是为了把「后端没起」和「模型失败」分开，' +
+            '不然它们在这个页面上长得一模一样）</span>'
+        }
+      }
+
+      async function run() {
+        go.disabled = true
+        out.innerHTML = '<div class="card">正在跑…（一次真调用，约 5～20 秒）</div>'
+        const t0 = performance.now()
+        try {
+          const r = await fetch(API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ goal: $('goal').value }),
+          })
+          const secs = ((performance.now() - t0) / 1000).toFixed(1)
+          const body = await r.json()
+
+          if (!r.ok) {
+            // 后端的错误一律在 detail 里（502 = 调模型失败 / 500 = Prompt 没写）
+            out.innerHTML =
+              `<div class="card"><div class="warn red">HTTP ${r.status}（${secs} 秒）` +
+              `<pre>${esc(body.detail ?? JSON.stringify(body))}</pre></div></div>`
+            return
+          }
+
+          const errors = body.issues.filter((i) => i.severity === 'error')
+          const warns = body.issues.filter((i) => i.severity === 'warning')
+          const u = body.usage ?? {}
+
+          let html = '<div class="card">'
+          html += `<div class="meta">节点数 <b>${body.nodes.length}</b> · ` +
+            `error <b>${errors.length}</b> · warning <b>${warns.length}</b> · ` +
+            `用量 <b>${u.input_tokens ?? '?'} in / ${u.output_tokens ?? '?'} out</b> · ` +
+            `后端耗时 <b>${u.elapsed_ms ?? '?'} ms</b> · 端到端 <b>${secs} 秒</b></div>`
+
+          for (const i of body.issues) {
+            html += `<div class="warn ${i.severity === 'error' ? 'red' : 'amber'}">` +
+              `${i.severity === 'error' ? '🔴' : '🟡'} <code>${esc(i.code)}</code> ${esc(i.message)}</div>`
+          }
+
+          // ⚑ 校验没实现时**必须显示** —— 不然"0 个 issue"会被读成"校验通过"
+          if (!body.check_implemented) {
+            html += '<div class="warn amber">⚠️ 校验（§7.2 ① 的 7 条）**未实现** —— ' +
+              '上面没有 issue ≠ 没有问题，是还没查。</div>'
+          }
+
+          html += `<pre>${esc(renderTree(body.nodes))}</pre>`
+          html += '</div>'
+          out.innerHTML = html
+        } catch (e) {
+          out.innerHTML =
+            `<div class="card"><div class="warn red">请求发不出去：${esc(e.message)}` +
+            '<br>（先看上面那行后端状态）</div></div>'
+        } finally {
+          go.disabled = false
+        }
+      }
+
+      go.addEventListener('click', run)
+      checkHealth()
+    </script>
+  </body>
+</html>
