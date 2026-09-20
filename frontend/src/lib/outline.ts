@@ -289,6 +289,33 @@ function validateDependencies(byId: Map<NodeId, OutlineNode>, issues: StructureI
     }
   }
 
+  /* ── ①b 容器【自己】写了依赖 ─────────────────────────────
+   * ⚑ 注意这一条和上面**方向相反**：
+   *     上面   "谁**指向**了一个容器"  → E_DEP_ON_CONTAINER
+   *     这里   "容器**自己**有依赖"    → W_CONTAINER_DEPS_UNREAD
+   *
+   *   容器的 `depends_on` **没有任何代码读它** —— 看调度循环：
+   *     simulation.ts:124  if (containers.has(n.id)) continue   ← 容器在这儿就被跳过了
+   *     simulation.ts:126  const depsOk = n.depends_on.every(...)  ← 压根轮不到容器
+   *   容器的状态是【汇总】出来的（rollupStatuses），它自己不执行、也没人看它的依赖。
+   *
+   *   于是模型写下的"**整组要等 X**"**从此不存在** ✗ —— 而图上什么异常都没有。
+   *   这是 #13 的又一种形状：丢的不是任务，是一条**约束**。
+   *
+   * ⚠️ 报 warning 不报 error：它不制造死锁（容器不派发，孩子们有自己的依赖），
+   *    所以不该拦住整张图（§7.1 的闸门只管 error）。 */
+  for (const n of byId.values()) {
+    if (!containers.has(n.id) || n.depends_on.length === 0) continue
+    issues.push({
+      severity: 'warning',
+      node_id: n.id,
+      code: 'W_CONTAINER_DEPS_UNREAD',
+      message:
+        `「${n.title}」是个分组（容器），它自己的 depends_on 没有人读 —— ` +
+        `这条约束不会生效。要表达"整组要等 X"，就让组里每个任务都依赖 X`,
+    })
+  }
+
   /* ── ② 依赖环 ───────────────────────────────────────────
    *
    * DFS 三色标记：

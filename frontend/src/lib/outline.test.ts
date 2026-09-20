@@ -257,6 +257,66 @@ describe('buildTree · 依赖图校验', () => {
     expect(codes).toEqual(['E_DANGLING_DEP', 'E_ORPHAN_PARENT'])
   })
 
+  it('⚑ 容器【自己】写了 depends_on → W_CONTAINER_DEPS_UNREAD', () => {
+    //  ├─ 制定行程  [容器] ← 依赖: 查询航班   ← 模型想说的"整组要等查询完"
+    //  │   └─ 大阪行程
+    //  └─ 查询航班
+    const outline = [
+      node('r', null, 0, '根'),
+      node('grp', 'r', 0, '制定行程', { depends_on: ['q'] }),
+      node('a', 'grp', 0, '大阪行程'),
+      node('q', 'r', 1, '查询航班'),
+    ]
+    const issues = codesOf(outline, 'W_CONTAINER_DEPS_UNREAD')
+    expect(issues).toHaveLength(1)
+    expect(issues[0].node_id).toBe('grp')
+    // ⚠️ warning 不是 error —— 它不制造死锁（容器不派发，孩子有自己的依赖），
+    //    丢的是一条约束不是一个任务，所以【不该】拦住整张图
+    expect(issues[0].severity).toBe('warning')
+    expect(hasBlockingIssue(buildTree(outline).issues)).toBe(false)
+  })
+
+  it('容器【没有】依赖时不报（这是正常形态）', () => {
+    const outline = [
+      node('r', null, 0, '根'),
+      node('grp', 'r', 0, '行前准备'),
+      node('a', 'grp', 0, '办签证'),
+    ]
+    expect(buildTree(outline).issues).toEqual([])
+  })
+
+  it('⚑ 普通【任务】有依赖不报这条 —— 它只管容器', () => {
+    // ⚠️ 这条守的是一眼看过去很容易写错的实现："谁有 depends_on 都报"。
+    //    任务依赖任务是**正常依赖**，报它等于把这个功能整个废掉。
+    const outline = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '查航班'),
+      node('b', 'r', 1, '订机票', { depends_on: ['a'] }),
+    ]
+    expect(codesOf(outline, 'W_CONTAINER_DEPS_UNREAD')).toEqual([])
+  })
+
+  it('⚑⚑ 两个方向不会混：一个报指向容器，一个报容器有依赖', () => {
+    // 这是这一组里最该钉死的一条 —— 两个 code 的**方向正好相反**，
+    // 名字又长得像（都是 CONTAINER + DEP），实现里写反了不会报错，
+    // 只会安静地把病因说成另一个 ✗
+    const outline = [
+      node('r', null, 0, '根'),
+      node('grp', 'r', 0, '制定行程', { depends_on: ['q'] }), // ① 容器自己有依赖
+      node('a', 'grp', 0, '大阪行程', { depends_on: ['grp'] }), // ② 任务指向容器（还是它爸）
+      node('q', 'r', 1, '查询航班'),
+    ]
+    const issues = buildTree(outline).issues
+    expect(issues.map((i) => i.code).sort()).toEqual([
+      'E_DEP_ON_CONTAINER',
+      'W_CONTAINER_DEPS_UNREAD',
+    ])
+    // 各挂在【自己】那个节点上 —— 一个是"谁在等"，一个是"谁有死字段"
+    const byCode = new Map(issues.map((i) => [i.code, i.node_id]))
+    expect(byCode.get('E_DEP_ON_CONTAINER')).toBe('a')
+    expect(byCode.get('W_CONTAINER_DEPS_UNREAD')).toBe('grp')
+  })
+
   it('正常的依赖链不报错', () => {
     const outline = [
       node('r', null, 0, '根'),
