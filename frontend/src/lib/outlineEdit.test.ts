@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import { datasets } from '../mocks'
 import { node } from '../mocks/_helper'
-import type { OutlineNode } from '../types/outline'
+import type { IssueCode, OutlineNode } from '../types/outline'
 import { buildTree } from './outline'
 import { deleteImpact, deleteNode, moveNode, nodePath, possibleParents, siblingsOf } from './outlineEdit'
 
@@ -42,9 +42,15 @@ function base(): OutlineNode[] {
   ]
 }
 
-/** 断言"挪完之后数据仍然合法"—— 用项目自己的校验器，不另写一套。 */
-function expectClean(outline: OutlineNode[], what = ''): void {
-  const issues = buildTree(outline).issues
+/**
+ * 断言"挪完之后数据仍然合法"—— 用项目自己的校验器，不另写一套。
+ *
+ * ⚠️ `allow` 是**点名例外**，不是"放宽"：用它的时候必须写清楚为什么
+ *    （见下面穷举那条里对 `E_DEP_ON_CONTAINER` 的说明）。
+ *    例外不写理由的话，它就退化成"这个断言反正也不严"。
+ */
+function expectClean(outline: OutlineNode[], what = '', allow: IssueCode[] = []): void {
+  const issues = buildTree(outline).issues.filter((i) => !allow.includes(i.code))
   expect(issues, `${what} 产生了坏数据：${JSON.stringify(issues, null, 2)}`).toEqual([])
 }
 
@@ -298,7 +304,26 @@ describe('moveNode · 在所有 mock 数据集上穷举', () => {
             const r = moveNode(d.outline, from.id, to.id, pos)
             if (!r.ok) continue
             moves++
-            expectClean(r.outline, `把「${from.title}」挪到「${to.title}」的 ${pos} 位之后，`)
+            // ⚑ 点名放行 `E_DEP_ON_CONTAINER` —— 这是**一条真实的发现**，
+            //   不是"断言太严了"：
+            //
+            //   把「行前准备」拖到「购买旅行保险」底下 → 后者【变成了容器】，
+            //   而「打印行程单」正依赖着它 → 那条依赖从此指向一个不会执行的
+            //   分组，永远等不到。
+            //
+            //   ⚠️ 这个状态在我加这条校验**之前是完全静默的** ——
+            //      拖动的人看不到任何提示，下游那个任务永远不动，
+            //      而界面上它就是个普普通通的「待办」（#13）。
+            //
+            //   ⚠️ moveNode **不该**自己修它：把那几条依赖删掉＝静默丢掉一个
+            //      约束（"打印行程单要等保险办完"就没了），比报错更糟 ✗。
+            //      所以只能留着让人看见 —— 而"看得见"正是这条校验的全部意义。
+            //
+            //   ⚑ 尚未决定的一件事：要不要让拖动**直接拒绝**这种落点
+            //      （拖一个正被人依赖的叶子进某个节点，会让那个节点变成容器）。
+            expectClean(r.outline, `把「${from.title}」挪到「${to.title}」的 ${pos} 位之后，`, [
+              'E_DEP_ON_CONTAINER',
+            ])
           }
         }
       }

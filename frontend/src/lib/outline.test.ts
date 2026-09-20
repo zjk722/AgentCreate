@@ -194,6 +194,69 @@ describe('buildTree · 依赖图校验', () => {
     expect(codesOf(outline, 'E_DANGLING_DEP')).toHaveLength(2)
   })
 
+  it('⚑ 依赖指向【容器】→ E_DEP_ON_CONTAINER', () => {
+    //   ├─ 行前准备      ← 分组，不会被执行
+    //   │   └─ 决定日期
+    //   └─ 买保险  ← 依赖【行前准备】这个分组 ✗
+    const outline = [
+      node('r', null, 0, '根'),
+      node('prep', 'r', 0, '行前准备'),
+      node('date', 'prep', 0, '决定日期'),
+      node('ins', 'r', 1, '买保险', { depends_on: ['prep'] }),
+    ]
+    const issues = codesOf(outline, 'E_DEP_ON_CONTAINER')
+    expect(issues).toHaveLength(1)
+    // 一样挂在【依赖方】身上 —— "是谁在等"才是用户要处理的那个节点
+    expect(issues[0].node_id).toBe('ins')
+    expect(issues[0].severity).toBe('error')
+    // ⚑ 报的是【标题】不是 id。悬空那条只能报 id（没有节点可取标题），
+    //   而这条有节点 —— 报标题人才认得出是图上的哪一块。
+    expect(issues[0].message).toContain('行前准备')
+    // ⚠️ 而且【不该】同时报悬空 —— 那个节点明明好端端在图里。
+    //    报"不存在"会让人去图里找，然后卡住（它就在那儿）。
+    expect(codesOf(outline, 'E_DANGLING_DEP')).toEqual([])
+  })
+
+  it('⚑ 依赖【自己的父节点】报同一条 —— 那是"等自己"，后果最重', () => {
+    //  ├─ 确认并预订   ← 分组
+    //  │   └─ 预订酒店  ← 依赖【确认并预订】= 它自己的爸爸
+    //
+    // ⚑ 这条不需要单独的 code：有孩子就是容器，而父节点必然有孩子（它自己）。
+    //   "依赖自己的祖辈"同理 —— 祖先全都是容器。
+    const outline = [
+      node('r', null, 0, '根'),
+      node('grp', 'r', 0, '确认并预订'),
+      node('hotel', 'grp', 0, '预订酒店', { depends_on: ['grp'] }),
+    ]
+    const issues = codesOf(outline, 'E_DEP_ON_CONTAINER')
+    expect(issues).toHaveLength(1)
+    expect(issues[0].node_id).toBe('hotel')
+  })
+
+  it('依赖一个【没有孩子的】兄弟不算容器', () => {
+    // ⚠️ 这条守的是一个很容易写错的实现：把判据写成 `parent_id !== null`
+    //    —— 那等于"除了根，谁都是容器"，于是【每一条依赖都会报错】。
+    //    容器 = 有【孩子】的节点，不是"有爸爸"的节点。
+    const outline = [
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '查航班'),
+      node('b', 'r', 1, '订机票', { depends_on: ['a'] }),
+    ]
+    expect(buildTree(outline).issues).toEqual([])
+  })
+
+  it('父 id 不存在的那种"容器"同时被人依赖 → 只报悬空一条，不说两遍', () => {
+    // 两个 code 会同时满足：`nobody` 既不在图里、又当过别人的 parent_id。
+    // 校验里的 `else if` 保证这条依赖只说一遍 —— 一件事说两遍只是噪声。
+    const outline = [
+      node('r', null, 0, '根'),
+      node('orphan', 'nobody', 0, '孤儿'),
+      node('a', 'r', 0, '甲', { depends_on: ['nobody'] }),
+    ]
+    const codes = buildTree(outline).issues.map((i) => i.code).sort()
+    expect(codes).toEqual(['E_DANGLING_DEP', 'E_ORPHAN_PARENT'])
+  })
+
   it('正常的依赖链不报错', () => {
     const outline = [
       node('r', null, 0, '根'),
