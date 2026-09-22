@@ -41,6 +41,7 @@ import argparse
 import hashlib
 import io
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -183,12 +184,45 @@ def judge_coverage(nodes: list[dict[str, Any]], spec: dict[str, Any]) -> str | N
 # ── 跑一条种子 ───────────────────────────────────────────────
 
 
+def judge_no_fabrication(nodes: list[dict[str, Any]], spec: list[str]) -> str | None:
+    """④ `must_not_match`：标题里**不许出现**的东西（一组正则）。
+
+    ⚑ 测的是 `§8.3` 的 #6 / #10 **已经写在文档里**的那条期望 ——「**不编造**」：
+
+        #6  `"AI"`（两字符）      → 不编造、只出 1–2 层
+        #10 「最近有点烦」         → 只出根节点，**不编造**
+
+    它一直只有人眼看，没有机器守 ✓。而"信息严重不足时，模型自己编一个
+    具体日期/人数出来"**在界面上看不出任何异常** —— 正是 #13。
+
+    ⚑ 为什么用正则而不是关键词：要挡的是"**编出一个具体的值**"这一类，
+       而具体的值本来就不确定 —— 只能按**形状**挡：
+       `\\d{4}[-/年]`（编了个年份）、`\\d+\\s*人`（编了个人数）。
+
+    ⚠️ 只查 `title`，**不查** `result_summary` / `evidence` ——
+       那些是执行期才有的字段，规划输出里根本没有。
+       写上去会永远通过 —— 又一个"没人读的字段"（见 `judge_distribution` 的说明）。
+
+    ⚠️ 这条**只**能挡住"最糟的那种错"，挡不住"问得太少"。
+       后者是主观的，断言它等于把一种风格焊死。见 `corpus.json` 里这条种子的 `note`。
+    """
+    if not spec:
+        return None
+
+    for n in nodes:
+        for pattern in spec:
+            if re.search(pattern, n["title"]):
+                return f"标题「{n['title']}」编了不该有的东西（匹配 /{pattern}/）"
+    return None
+
+
 def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
     """跑一条种子 `runs` 次，返回每一次的判定。"""
     limits = seed.get("limits", {})
     passed_struct = 0
     passed_dist = 0
     passed_cover = 0
+    passed_fab = 0
     passed_all = 0
     failures: list[str] = []
     detail: list[dict[str, Any]] = []
@@ -203,6 +237,7 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
         why_s = judge_structure(result.nodes, result.issues, seed["structure"])
         why_d = judge_distribution(result.nodes, seed.get("distribution") or {})
         why_c = judge_coverage(result.nodes, seed.get("coverage") or {})
+        why_f = judge_no_fabrication(result.nodes, seed.get("must_not_match") or [])
 
         if why_s is None:
             passed_struct += 1
@@ -210,11 +245,13 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
             passed_dist += 1
         if why_c is None:
             passed_cover += 1
+        if why_f is None:
+            passed_fab += 1
         # ⚑ "这条种子过了几次"必须是【所有已实现的层都过】的次数。
         #   ⚠️ 别用 min(结构, 分布, 覆盖) 代替 —— 那是**高估**：
         #   结构挂第 1 次、覆盖挂第 2 次时 min 说 4/5，
         #   而真正"全部通过"的只有 3 次。（这个坑第一版就踩了。）
-        if why_s is None and why_d is None and why_c is None:
+        if why_s is None and why_d is None and why_c is None and why_f is None:
             passed_all += 1
 
         # ⚑ 每一次的原始数字都留下 —— **通过的也要**。
@@ -239,7 +276,9 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
             step += f" · 分布：{why_d}"
         if why_c:
             step += f" · 覆盖：{why_c}"
-        if why_s or why_d or why_c:
+        if why_f:
+            step += f" · 编造：{why_f}"
+        if why_s or why_d or why_c or why_f:
             titles = "、".join(n["title"] for n in result.nodes[:12])
             failures.append(f"{step}\n     它当时拆出的是：{titles}")
 
@@ -249,6 +288,7 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
         "struct": passed_struct,
         "dist": passed_dist,
         "cover": passed_cover,
+        "fab": passed_fab,
         "passed": passed_all,  # ⚑ 判定用的是这个 —— 见上面那段说明
         "failures": failures,
         "detail": detail,
@@ -267,8 +307,9 @@ def render(
     print(f"每条种子跑 {runs_per_seed} 次 · 共 {len(results) * runs_per_seed} 次调用")
     print()
     print("⚠️ 语义层（LLM-as-judge，`judges.py`）**还没做** —— 下面的判定只包含")
-    print("   结构 / 分布 / 覆盖 三层。")
-    print("   所以这里的「通过」意思是「结构、归属、关键词都对」，**不包括**「拆得好不好」。")
+    print("   结构 / 分布 / 覆盖 / 编造 四层。")
+    print("   所以这里的「通过」意思是「结构、归属、关键词都对，而且没编造」，")
+    print("   **不包括**「拆得好不好」。")
     print()
 
     # ⚠️ 不做等宽对齐：中文字符在终端里占两个格子，`:<10` 补出来的列对不齐。
@@ -282,7 +323,7 @@ def render(
         print(f"{r['id']}  {TIER_LABEL.get(r['tier'], r['tier'])}")
         print(
             f"    结构 {r['struct']}/{runs_per_seed} · 分布 {r['dist']}/{runs_per_seed}"
-            f" · 覆盖 {r['cover']}/{runs_per_seed} · {verdict}"
+            f" · 覆盖 {r['cover']}/{runs_per_seed} · 编造 {r['fab']}/{runs_per_seed} · {verdict}"
         )
 
     # ── 每条的明细（**通过的那几次也在内**）──────────────────────
