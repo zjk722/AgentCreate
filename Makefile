@@ -22,7 +22,7 @@ GOAL ?= 准备一次日本关西七日游
 #   `export` 是 make 层的事，**与 shell 无关**，两边都能用。
 export PYTHONIOENCODING = utf-8
 
-.PHONY: help plan prompt test eval serve web
+.PHONY: help plan prompt test eval serve restart web
 
 help:
 	@echo 'make plan GOAL="..."   目标 → 任务图骨架（调真模型；Prompt 没写会明确报错）'
@@ -31,6 +31,8 @@ help:
 	@echo 'make eval               A1 评测跑批（会花钱调模型；退化时非零退出码）'
 	@echo 'make eval ARGS="--only seed-03"   只跑一条种子（省 2/3 的调用）'
 	@echo 'make serve              起后端（§3.4 的 /v1/plan，端口 8000）'
+	@echo '                        ⚠️ 端口已被占时【报错退出】，不叠加第二个进程'
+	@echo 'make restart            重启后端（只杀它自己起过的那个，不碰别的）'
 	@echo 'make web                起前端（Vite，端口 5173；第一次先 npm install）'
 	@echo '                        ⚑ 前后端是【两个终端】各跑一条 —— 见下面说明'
 
@@ -54,9 +56,29 @@ eval:
 	@cd python_agent && uv run python -m evals.runner $(ARGS)
 
 # 起后端 HTTP 服务 —— §3.4 的 /v1/plan。
-# ⚠️ 开发用（`--reload`）；而且它**只在本地可达**，不暴露公网（§9.4）。
+#
+# ⚑ 端口被占时**报错退出**，不叠加第二个进程。这件事值得单独做，是因为：
+#   **Windows 允许两个 socket 绑同一个端口**（Linux 会直接报错 `Address already
+#   in use`，你当场就发现了）。于是"再起一个"不会失败，只会让请求**随机**落到
+#   旧的那个 —— 「改了代码只有一部分请求生效」，而界面上看不出来（#13）。
+#
+# ⚑ 逻辑在 `devserve.py`，不在这儿 —— 见那个文件的头部（判据是【试连】不是
+#   netstat；pid 文件放系统临时目录）。
+#   ⚠️ 特别是**别**把这里改成 `&` / `start` 那套后台写法：它在 cmd 和 sh 里不一样，
+#      和下面 `web` 那条注释里说的是同一类坑。
+#
+# ⚑ **故意不带 `--reload`**（理由写在 `devserve.py` 里）—— 它有时灵有时不灵，
+#   而且是双进程，会让"杀掉重启"变得不可靠。既然结论就是"改完就重启"，
+#   那就手动重启，别让它挡在中间。
+#
+# ⚑ 只在本地可达，不暴露公网（§9.4）。
 serve:
-	@cd python_agent && uv run uvicorn app.main:app --reload --port 8000
+	@cd python_agent && uv run python devserve.py serve
+
+# 重启。**只杀它自己起过的那个**（认 pid 文件），绝不碰"端口的占用者" ——
+# 那可能是别的东西，只有你能判断（杀进程不可逆）。
+restart:
+	@cd python_agent && uv run python devserve.py restart
 
 # 起前端（Vite dev server，端口 5173）。
 #
