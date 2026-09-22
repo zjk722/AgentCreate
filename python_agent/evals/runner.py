@@ -217,6 +217,35 @@ def judge_no_fabrication(nodes: list[dict[str, Any]], spec: list[str]) -> str | 
     return None
 
 
+def resolve_goal(goal: str, seed_id: str = "") -> str:
+    """种子的题目。如果它是个【文件路径】，把文件内容读出来。
+
+    ⚑ 为什么需要它：README 早就写着「长文写成 `"inputs/xxx.txt"`」——
+       而 runner **没有**这个代码 ✗。于是那个路径会被**原样当成目标**发给模型
+       （"帮我规划一下 inputs/prod-req.txt"），拆出来的图看着挺正常，
+       **报告里一切绿灯** ✗ —— 又一次 #13：错的东西看起来是对的。
+
+       （同一个毛病 `distribution` 也犯过一次：数据里写着、runner 不读它。
+         所以这条不是补功能，是**补一个文档已经承诺过的东西**。）
+
+    ⚠️ 文件不存在时**直接报错**，绝不退回"把路径当目标" ✗ ——
+       那正是上面那个坑，而且是**静默**的。
+    """
+    if not goal.endswith(".txt"):
+        return goal
+
+    path = EVALS_DIR / goal
+    if not path.is_file():
+        # ⚑ 报错要点名【是哪颗种子】的哪个文件 —— 只说路径的话，
+        #   你还得自己去 corpus 里搜哪个种子引用了它。
+        raise FileNotFoundError(
+            f"种子的输入文件不存在（{seed_id or '某个种子'}）：{path}\n"
+            f"  README 说长文写成 'inputs/xxx.txt' —— 那就得真有这个文件。\n"
+            f"  要么把长文写进去，要么先跑别的种子（--only）。"
+        )
+    return path.read_text(encoding="utf-8")
+
+
 def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
     """跑一条种子 `runs` 次，返回每一次的判定。"""
     limits = seed.get("limits", {})
@@ -230,7 +259,7 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
 
     for k in range(runs):
         result = plan_goal(
-            seed["goal"],
+            resolve_goal(seed["goal"], seed["id"]),
             max_depth=limits.get("max_depth", 3),
             max_children=limits.get("max_children", 6),
         )
@@ -469,7 +498,14 @@ def main() -> int:
             baseline = raw.get("seeds") or {}
 
     try:
-        results = [run_seed(s, args.runs) for s in seeds]
+        try:
+            results = [run_seed(s, args.runs) for s in seeds]
+        except FileNotFoundError as e:
+            # ⚑ 长文种子缺输入文件 → **明确报错**，不跳过 ✗
+            #   静默跳过的话，报告里"少了一条种子"，而你不会知道为什么少
+            #   —— 那就是 #13，只不过发生在评测自己的输出上。
+            print(f"❌ {e}")
+            return 2
     except KeyboardInterrupt:
         print("\n被打断了 —— 这次的结果不完整，不写基线。")
         return 130

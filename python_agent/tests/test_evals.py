@@ -11,7 +11,15 @@
    现在它有一条机器判的线了。
 """
 
-from evals.runner import judge_no_fabrication
+import json
+
+from evals.runner import (
+    CORPUS,
+    judge_coverage,
+    judge_distribution,
+    judge_no_fabrication,
+    judge_structure,
+)
 
 PATTERNS = [r"\d{4}\s*[-/年]", r"\d+\s*人"]
 
@@ -52,3 +60,63 @@ def test_报错要说清是哪条标题和哪个模式():
     assert why is not None
     assert "3天2晚行程" in why
     assert "天日" in why
+
+
+# ── corpus.json 本身 ─────────────────────────────────────────
+#
+# ⚑ 这一组一行模型都不调 —— 全是**免费的**。而它们守的东西，
+#   恰恰是"跑起来才发现"的那类错（一次 5 个调用，才知道 JSON 坏了）。
+
+
+def _corpus() -> list[dict]:
+    return json.loads(CORPUS.read_text(encoding="utf-8"))
+
+
+def test_corpus_是合法_json():
+    """⚑ 看着像句废话，但**手写 JSON 真的会坏** —— 2026-09-22 就坏过一次：
+
+    `note` 里混进一个没转义的 `"`（`是"扇出会不会爆"`），于是报
+    `Expecting ',' delimiter: line 161 column 97` ✗ ——
+    **它不说那是引号的问题**，你得自己数到第 161 行去。
+    """
+    assert len(_corpus()) > 0
+
+
+def test_每颗种子都有_runner_必须的字段():
+    # ⚠️ runner 里写的是 `seed["structure"]`（不是 `.get`）——
+    #    缺了会 **KeyError 崩在跑批半路**，而那时已经花掉几次调用了 ✗
+    for s in _corpus():
+        for k in ("id", "tier", "goal", "limits", "structure"):
+            assert k in s, f"{s.get('id', '?')} 缺字段 {k}"
+        assert s["tier"] in ("green", "yellow", "red"), s["id"]
+
+
+def test_四个判定函数对每颗种子的断言都不炸():
+    """四个判定拿**每颗种子的 spec** 都能跑完，不抛异常。
+
+    ⚠️ 这里**只断言"不炸"，不断言判出什么** —— 空节点列表对一条
+       `node_count: {min: 10}` 的种子本来就该判失败（`0 < min`），
+       那是对的 ✓。（第一版这里写的 `is None`，就是错的 ✗。）
+
+    ⚑ 专门守的是骨架种子那一类：它们的 `coverage` / `distribution` /
+      `must_not_match` 都是 `null` —— 空 spec 必须**安全**处理，
+      而不是在跑到第 7 颗种子时 KeyError 崩掉（那时已经花掉几次调用了 ✗）。
+
+    ⚑ 但要注意：空 spec 的"通过" **不等于"测过了"** ✗ —— 它只查了 `error`。
+      所以每颗骨架种子的 `note` 里都写明了"断言还没定"，
+      否则"合格"会被读成"验过了"（#13 的形状）。
+    """
+    for s in _corpus():
+        judge_structure([], [], s["structure"])
+        judge_distribution([], s.get("distribution") or {})
+        judge_coverage([], s.get("coverage") or {})
+        judge_no_fabrication([], s.get("must_not_match") or [])
+
+
+def test_长文种子的路径是相对_evals_的():
+    """⚠️ `resolve_goal()` 读的是 `EVALS_DIR / goal` ——
+    写成绝对路径、或者从仓库根算起的路径，都会找不到；
+    而那种错**只在真跑的时候**才炸（又是 5 个调用之后）。"""
+    for s in _corpus():
+        if s["goal"].endswith(".txt"):
+            assert s["goal"].startswith("inputs/"), f"{s['id']} 的路径不对：{s['goal']}"

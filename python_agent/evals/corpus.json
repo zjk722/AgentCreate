@@ -91,7 +91,7 @@
     "limits": { "max_depth": 3, "max_children": 9 },
     "structure": {
       "allowed_warnings": [],
-      "node_count": { "min": 1, "max": 10 }
+      "node_count": { "min": 10, "max": 20 }
     },
     "distribution": null,
     "coverage": null,
@@ -103,5 +103,94 @@
     ],
     "semantics": null,
     "note": "§8.3 种子 #6 / #10 那一类：信息严重不足（没有日期、人数、预算、城市）。⚠️ 这条**故意不写 must_contain** —— 该问什么由模型定，钉死措辞等于把一种风格焊死，而那会反过来拦着你改 Prompt。它只钉**一条能机器判的**：不许编造 —— 模型给一个含糊目标时自己编出具体日期或人数，而界面上看不出任何异常（#13）。这也是 `must_not_match` 这个字段的第一条用例。"
+  },
+
+  {
+    "id": "seed-05",
+    "tier": "green",
+    "goal": "用导图讲清楚 HTTP 协议",
+    "limits": { "max_depth": 3, "max_children": 6 },
+    "structure": { "allowed_warnings": [] },
+    "distribution": null,
+    "coverage": null,
+    "semantics": null,
+    "note": "§8.3 种子 #5（🟢）：层级不跳跃。⚠️ **断言还没定** —— 现在只查 error。⚑ 其中「层级不跳跃」那半**已经能测**：E_LEVEL_SKIP 是 error，恒查 ✓。⚑ 补 node_count / 关键词之前，先 `--only` 跑一遍看真长什么样 —— seed-01 就是凭想象写断言，于是永远红。"
+  },
+  {
+    "id": "seed-06",
+    "tier": "green",
+    "goal": "分析公司 Q3 收入下滑原因",
+    "limits": { "max_depth": 3, "max_children": 6 },
+    "structure": { "allowed_warnings": [] },
+    "distribution": null,
+    "coverage": null,
+    "semantics": null,
+    "note": "§8.3 种子 #4（🟢）：同层抽象一致。⚠️ 这一条**只能靠 judge** ✗（judges.py 还没做）—— 现在只查 error，也就是说它基本测不出 §8.3 要的那件事。⚑ 等 judge 做出来再把 semantics 填上。"
+  },
+  {
+    "id": "seed-07",
+    "tier": "green",
+    "goal": "inputs/prod-req-800.txt",
+    "limits": { "max_depth": 3, "max_children": 6 },
+    "structure": { "allowed_warnings": [] },
+    "distribution": null,
+    "coverage": null,
+    "semantics": null,
+    "note": "§8.3 种子 #3（🟢）：覆盖 5 关键词、节点可溯源。⚠️⚠️ **输入文件还没写** —— 现在跑它会【明确报错退出】（不会把路径当目标发出去 ✓，见 inputs/README.md）。⚑ 文件写进 inputs/ 之后，先 `--only` 跑一遍再定 must_contain —— **不许凭想象写**（seed-01 的教训）。"
+  },
+  {
+    "id": "seed-08",
+    "tier": "yellow",
+    "goal": "展开到 7 层",
+    "limits": { "max_depth": 3, "max_children": 6 },
+    "structure": { "allowed_warnings": [] },
+    "distribution": null,
+    "coverage": null,
+    "semantics": null,
+    "note": "§8.3 种子 #7（🟡）：不违反 max_depth。⚑ 这条**现在就能完整测** ✓ —— max_depth 卡在 3，超了会报 W_DEPTH_EXCEEDED，而它不在白名单里 → 直接不合格 ✓。⚠️ 但还没跑过，不知道模型会不会真去凑 7 层（如果它老实停在 3 层，这条其实什么都没测到，得看一眼再定要不要加断言）。"
+  },
+  {
+    "id": "seed-09",
+    "tier": "yellow",
+    "goal": "inputs/bullet-list-20.txt",
+    "limits": { "max_depth": 3, "max_children": 6 },
+    "structure": { "allowed_warnings": [] },
+    "distribution": null,
+    "coverage": null,
+    "semantics": null,
+    "note": "§8.3 种子 #8（🟡）：重组而非照抄。⚠️ 这半**只能靠 judge** ✗。⚠️⚠️ **输入文件还没写**（现在跑会明确报错）。⚑ 结构上能看出的那一半是【扇出会不会爆】（照抄 20 项 → 扇出 20）—— 但阈值要等文件写好、跑一遍才知道。"
+  },
+  {
+    "id": "seed-10",
+    "tier": "yellow",
+    "goal": "inputs/long-form-3000.txt",
+    "limits": { "max_depth": 3, "max_children": 6 },
+    "structure": { "allowed_warnings": [] },
+    "distribution": null,
+    "coverage": null,
+    "semantics": null,
+    "note": "§8.3 种子 #9（🟡）：不超扇出、不超 token。⚑ 「不超扇出」那半**现在就能测** ✓（W_FANOUT_EXCEEDED 不在白名单 → 超了就红）；「不超 token」那半需要一个 usage 断言，**还没这个字段** ✗。⚠️⚠️ 输入文件还没写（现在跑会明确报错）。"
+  },
+  {
+    "id": "seed-11",
+    "tier": "red",
+    "goal": "inputs/jargon-heavy.txt",
+    "limits": { "max_depth": 3, "max_children": 6 },
+    "structure": { "allowed_warnings": [] },
+    "distribution": null,
+    "coverage": null,
+    "semantics": null,
+    "note": "§8.3 种子 #11（🔴）：标题 ≤ 12 字。⚑ 这条**现在就能完整测** ✓ —— E_TITLE_TOO_LONG 是 error，恒查 ✓。⚠️⚠️ 但**那段话还没写** —— 「含大量专有名词缩写」是这条种子的压力来源，随便凑一段就测不出东西（那是种子的**内容**，得人来定）。"
+  },
+  {
+    "id": "seed-12",
+    "tier": "red",
+    "goal": "inputs/copy-verbatim.txt",
+    "limits": { "max_depth": 3, "max_children": 6 },
+    "structure": { "allowed_warnings": [] },
+    "distribution": null,
+    "coverage": null,
+    "semantics": null,
+    "note": "§8.3 种子 #12（🔴）：把这段话原封不动做成导图 → **拒绝照抄**。⚠️ 只能靠 judge ✗。⚠️⚠️ …而且「这段话」本身就是要测的东西，**还没写**（现在跑会明确报错）。⚑ 它和 seed-09 是同一族的两个方向：一个要求别照抄，一个要求拒绝照抄。"
   }
 ]
