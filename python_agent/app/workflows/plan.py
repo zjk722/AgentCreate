@@ -15,15 +15,44 @@
   那是 §14.2 的镜像双实现，只不过发生在同一侧。
 """
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
 from app.domain.validation import validate_generated
 from app.llm.client import PlanCallError, call_json
-from app.llm.prompts import build_messages
+from app.llm.prompts import PLAN_OUTPUT_SCHEMA, SYSTEM_PROMPT, build_messages
 from app.planner.deps import resolve_depends
 from app.planner.outline import LevelSkipError, assemble
 from app.tools.registry import load_tools
+
+
+def prompt_fingerprint() -> str:
+    """这一版 Prompt 的指纹 —— 回答"**这个结果是哪一版产出的**"。
+
+    ⚑ 为什么需要它：改了 `prompts.py` 之后，**从外面没有任何办法知道
+       正在跑的那个进程用的是哪一版**。
+
+       `uvicorn --reload` 什么时候重载完、有没有干净地杀掉旧 worker ——
+       这些都看不见。而表现是"**有时候结果对、有时候不对**"，
+       页面上一切正常（#13 的形状：错的东西看起来是对的）。
+
+       有了指纹，页面上直接显示它，一眼就能分辨。
+       ⚑ 顺带把那个"两个 worker 抢同一个端口"的坑也变得**可见**了 ——
+       打到旧 worker 的请求，指纹就是旧的。
+
+    ⚑ 算的是【代码】不是【数据】：只取 `SYSTEM_PROMPT` + 输出 schema，
+       **不含 `goal`**。含了的话每换一个目标指纹就变，等于没有指纹。
+       （`sort_keys` 是必须的：dict 的顺序不该影响"这是哪一版"。）
+
+    ⚠️ 已知边界：它**不覆盖** `build_user_prompt` 的模板改动。
+       要覆盖得把模板也摘出来算 —— 等真遇到"改了模板却看不出来"再加。
+       现在加只是把一件小事做复杂。
+    """
+    schema = json.dumps(PLAN_OUTPUT_SCHEMA, sort_keys=True, ensure_ascii=False)
+    material = f"{SYSTEM_PROMPT}\x1f{schema}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:8]
 
 
 @dataclass
@@ -32,7 +61,16 @@ class PlanResult:
     nodes: list[dict[str, Any]]
     issues: list[dict[str, Any]]
     usage: dict[str, int]
+    # ⚑ 这条字段存在，就是为了让"跑的是哪一版 Prompt"从响应里看得出来
+    #
+    # ⚠️ **故意不给默认值**：给个 `""` 的话，哪天忘了在 `plan_goal()` 里传它，
+    #   构造照样成功、响应里照样有字段 —— 只是永远是空的，**而没有任何东西会红** ✗
+    #   （本项目踩过三次"参数收了从未使用"，都是这个形状。）
+    #   必填的话，忘传 = 当场 TypeError ✓
+    prompt_fingerprint: str
     # ⚠️ 这条字段存在，就是为了让"没报 issue"不被读成"通过"
+    #
+    # （它有默认值是对的：`check_implemented=False` 正是"还没查"的诚实值 ✓）
     check_implemented: bool = False
 
 
@@ -78,4 +116,5 @@ def plan_goal(goal: str, *, max_depth: int = 3, max_children: int = 9) -> PlanRe
         issues=issues,
         usage=usage,
         check_implemented=True,
+        prompt_fingerprint=prompt_fingerprint(),
     )

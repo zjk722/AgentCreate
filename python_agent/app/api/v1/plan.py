@@ -34,11 +34,17 @@ class PlanRequest(BaseModel):
 
 
 class PlanResponse(BaseModel):
-    """§3.4 的响应形状 + `check_implemented`。
+    """§3.4 的响应形状 + 两个**故意多带**的字段（§3.4 里没有）。
 
-    ⚑ `check_implemented` 是**故意多带的一个字段**（§3.4 里没有）：
-       `issues` 为空有两种可能 —— **查过了没问题** / **还没查**。
+    ⚑ `check_implemented`：`issues` 为空有两种可能 ——
+       **查过了没问题** / **还没查**。
        不给这个标记的话，调用方会把后者读成前者（#13 的形状）。
+
+    ⚑ `prompt_fingerprint`：改了 `prompts.py` 之后，**从响应里看不出
+       跑的是哪一版** —— `--reload` 什么时候重载完、旧 worker 有没有
+       退干净，外面都不知道。而表现是"有时候结果对、有时候不对"，
+       页面上一切正常（#13）。
+       带上指纹，页面上直接显示，一眼分辨。见 `prompt_fingerprint()`。
     """
 
     goal: str
@@ -46,6 +52,7 @@ class PlanResponse(BaseModel):
     issues: list[dict]
     usage: dict
     check_implemented: bool
+    prompt_fingerprint: str
 
 
 @router.post("/plan", response_model=PlanResponse)
@@ -68,4 +75,5 @@ def plan(req: PlanRequest) -> PlanResponse:
         issues=result.issues,
         usage=result.usage,
         check_implemented=result.check_implemented,
+        prompt_fingerprint=result.prompt_fingerprint,
     )
