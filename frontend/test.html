@@ -228,9 +228,16 @@
           // ⚑ 整体检查：**一个节点都没有** `depends_on` 字段。
           //
           //   那不像"模型没写"，而更像**后端跑的是旧代码** ✗
-          //   —— 真发生过：改完 python 之后，uvicorn 的 `--reload` **不会干净地杀掉旧 worker**，
-          //      于是两个进程抢同一个端口（Windows 允许这样 ✗），请求**随机**落到旧的那个 ✓
+          //   —— 真发生过两次：两个 uvicorn 抢同一个端口（Windows 允许这样 ✗），
+          //      请求**随机**落到旧的那个 ✓
           //      → 表现是"有时候有依赖、有时候没有"，而**页面上看不出区别**（#13 的形状）
+          //
+          // ⚑ 2026-09-22 已经从两头堵上了：
+          //   · `make serve` → 端口被占就**报错退出**，不再叠加（`python_agent/devserve.py`）
+          //   · `make restart` → 只杀它自己起过的那个
+          //   · 且**去掉了 `--reload`** —— 它有时灵有时不灵，而且是双进程，
+          //     会让"杀掉重启"变得不可靠（netstat 报的 PID 可能是死的）
+          //   · 页面上那个 **Prompt 指纹** 就是给这件事留的探针：不一致 = 打到了旧进程
           const missing = body.nodes.filter((n) => !('depends_on' in n)).length
           if (body.nodes.length > 0 && missing === body.nodes.length) {
             html +=
