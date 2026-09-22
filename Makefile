@@ -30,6 +30,8 @@ help:
 	@echo 'make test               Python 侧的测试'
 	@echo 'make eval               A1 评测跑批（会花钱调模型；退化时非零退出码）'
 	@echo 'make eval ARGS="--only seed-03"   只跑一条种子（省 2/3 的调用）'
+	@echo '                       ⚠️ 引号是【必须】的：不写的话，make 按空格分词，把 seed-03 当成'
+	@echo '                          另一个目标，只把 --only 传给 runner —— 报 expected one argument'
 	@echo 'make serve              起后端（§3.4 的 /v1/plan，端口 8000）'
 	@echo '                        ⚠️ 端口已被占时【报错退出】，不叠加第二个进程'
 	@echo 'make restart            重启后端（只杀它自己起过的那个，不碰别的）'
