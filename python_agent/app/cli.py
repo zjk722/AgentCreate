@@ -23,7 +23,7 @@ from app.llm.client import PlanCallError
 from app.llm.prompts import PromptNotWritten, build_messages
 from app.planner.outline import LevelSkipError
 from app.tools.registry import load_tools
-from app.workflows.plan import PlanResult, plan_goal
+from app.workflows.plan import PlanResult, plan_goal, prompt_fingerprint
 
 # ⚑ `.env` 的加载**已经挪到 `app/llm/client.py`** —— 挂在"用 key 的地方"，
 #   而不是挂在某一个调用方身上。理由写在那边（一句话：否则别的入口都得自己记得加载一次）。
@@ -101,6 +101,11 @@ def _print_messages(goal: str, max_depth: int, max_children: int) -> None:
         print()
 
     print("（以上是【将要发出去】的内容 —— 没有调模型，没有花一分钱）")
+    # ⚑ 指纹也打出来：它和页面上显示的是同一个值。
+    #   于是"我要发出去的这一版"和"页面上真跑的那一版"能直接对着看 ——
+    #   两边不一致，就是后端还没重载（或者跑的是旧 worker）。
+    #   这一步**免费**，所以是排查"改了 Prompt 没生效"的第一站。
+    print(f"Prompt 指纹：{prompt_fingerprint()}（改 prompts.py 后应该变；页面上也显示它）")
 
     if goal not in messages[1]["content"]:
         print()
@@ -147,6 +152,12 @@ def _report(result: PlanResult) -> None:
             print(f"  {mark} [{issue['code']}] {issue['message']}")
         if errors:
             print("  ⚠️ 有 error → 前端的「确认并开始执行」会被闸门拦住（§7.1）。这是设计，不是故障。")
+
+    # ⚑ 打印指纹，和页面上显示的是同一个值 ——
+    #   于是"make plan 跑出来的"和"页面上跑出来的"是不是同一版，可以对着看。
+    #   改了 Prompt 之后第一眼看这个，能立刻知道 reload 生不生效。
+    print()
+    print(f"Prompt 指纹：{result.prompt_fingerprint}（改了 prompts.py 之后它应该变）")
 
     print()
     print("注：标着【容器】的是分组，不是任务 —— 它们不会被派发执行。")
