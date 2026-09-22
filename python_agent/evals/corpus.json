@@ -152,7 +152,7 @@
   {
     "id": "seed-09",
     "tier": "yellow",
-    "goal": "inputs/bullet-list-20.txt",
+    "goal": "",
     "limits": { "max_depth": 3, "max_children": 6 },
     "structure": { "allowed_warnings": [] },
     "distribution": null,
@@ -180,7 +180,7 @@
     "distribution": null,
     "coverage": null,
     "semantics": null,
-    "note": "§8.3 种子 #11（🔴）：标题 ≤ 12 字。⚑ 这条**现在就能完整测** ✓ —— E_TITLE_TOO_LONG 是 error，恒查 ✓。⚠️⚠️ 但**那段话还没写** —— 「含大量专有名词缩写」是这条种子的压力来源，随便凑一段就测不出东西（那是种子的**内容**，得人来定）。"
+    "note": "§8.3 种子 #11（🔴）：标题 ≤ 12 字。⚑ 这条**现在就能完整测** ✓ —— 超长标题恒查 ✓。⚠️ 2026-09-22：它从 error 降成了 warning（`W_TITLE_TOO_LONG`，理由见 §7.2 ① 那张表下面），但**这条断言一个字没松** —— 本种子的 `allowed_warnings` 是 `[]`，而 runner 对「不在白名单里的 warning」一样判红。降级变的只是【用户会不会被 §7.1 的闸门拦住开工】。⚠️⚠️ 但**那段话还没写** —— 「含大量专有名词缩写」是这条种子的压力来源，随便凑一段就测不出东西（那是种子的**内容**，得人来定）。"
   },
   {
     "id": "seed-12",

@@ -14,7 +14,7 @@ DOCUMENTED_CODES = {
     "E_MULTIPLE_ROOTS",
     "E_LEVEL_SKIP",
     "E_EMPTY_TITLE",
-    "E_TITLE_TOO_LONG",
+    "W_TITLE_TOO_LONG",
     "W_DEPTH_EXCEEDED",
     "W_FANOUT_EXCEEDED",
     "W_DUPLICATE_SIBLING",
@@ -113,7 +113,7 @@ def test_fanout_is_not_checked_when_levels_are_broken():
     assert "W_FANOUT_EXCEEDED" not in got
 
 
-# ── E_EMPTY_TITLE / E_TITLE_TOO_LONG ───────────────────────
+# ── E_EMPTY_TITLE / W_TITLE_TOO_LONG ───────────────────────
 
 
 def test_empty_title():
@@ -132,12 +132,20 @@ def test_missing_title_counts_as_empty():
 def test_title_length_boundary():
     """§7.2 ① 写的是「标题 **>** 12 字」—— 所以 12 字正好合规，13 字才错。
 
-    ⚑ 边界必须钉死：差一个字，"每次都撞 error"和"完全没事"就换了个位置。
+    ⚑ 边界必须钉死：差一个字，"每次都撞这条"和"完全没事"就换了个位置。
+
+    ⚑ 2026-09-22 起它是 **warning 不是 error**（超长不再阻断开工 —— 理由见
+      §7.2 ① 那张表下面的说明）。所以这里额外钉一句 `severity`，
+      和 `test_depth_boundary` / `test_fanout_boundary` 保持一致。
+
+      ⚠️ 这一句不是装饰：**严重度是最容易被改回去而没人发现的东西** ——
+        改回去不会让任何别的测试变红，只会让用户又开始被拦住。钉住它。
     """
     assert check([n(1, "根"), n(2, "一" * TITLE_MAX)]) == []
 
     issues = check([n(1, "根"), n(2, "一" * (TITLE_MAX + 1))])
-    assert codes(issues) == ["E_TITLE_TOO_LONG"]
+    assert codes(issues) == ["W_TITLE_TOO_LONG"]
+    assert issues[0]["severity"] == "warning"
     assert f"{TITLE_MAX} 字上限" in issues[0]["message"]
 
 
@@ -184,7 +192,7 @@ def test_same_title_in_different_branches_is_fine():
 def test_every_produced_code_is_one_of_the_documented_seven():
     """⚑ 钉住 code 的拼写。
 
-    产出文档里没有的 code（比如把 `E_TITLE_TOO_LONG` 打成 `E_TITLE_TOOL_LONG`），
+    产出文档里没有的 code（比如把 `W_TITLE_TOO_LONG` 打成 `W_TITLE_TOOL_LONG`），
     前端**认不出来**，而且**没有任何东西会报错** —— 正是 #13 的形态。
 
     这里把所有能触发的坏数据混在一起跑一遍，确认产出的集合没有冒出去。

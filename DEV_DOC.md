@@ -463,7 +463,7 @@ map_edit_proposals (
 200 个节点 × 每条摘要数十字符是可接受的；换成完整输出（一次检索可能上千字）会把
 outline 撑爆，而 §4.3 明确要求 outline 是「写入原子、整批替换」的字段。
 
-**长度约束**：建议由生成侧截断到 ~40 字，超长截断加省略号 —— 与 `E_TITLE_TOO_LONG`
+**长度约束**：建议由生成侧截断到 ~40 字，超长截断加省略号 —— 与 `W_TITLE_TOO_LONG`
 同理，界面上放不下的东西不该进存储。
 
 > ⚠️ **相关的并行缺口**：失败原因（§4.1 `execution_tasks.error`）同样没有进 `outline`。
@@ -841,9 +841,9 @@ Java worker ──publish──▶ Redis
 
 ```jsonc
 {
-  "severity": "error",            // error | warning
+  "severity": "warning",          // error | warning
   "node_id": "7d2e8b45a901",
-  "code": "E_TITLE_TOO_LONG",
+  "code": "W_TITLE_TOO_LONG",
   "message": "标题 34 字，超过 12 字上限：'...'"
 }
 ```
@@ -861,10 +861,34 @@ Java worker ──publish──▶ Redis
 | `E_MULTIPLE_ROOTS` | 根节点数 ≠ 1 | 🔴 |
 | `E_LEVEL_SKIP` | 层级跳跃 | 🔴 |
 | `E_EMPTY_TITLE` | 空标题 | 🔴 |
-| `E_TITLE_TOO_LONG` | 标题 > 12 字 | 🔴 |
+| `W_TITLE_TOO_LONG` | 标题 > 12 字 | 🟡 |
 | `W_DEPTH_EXCEEDED` | 深度超限 | 🟡 |
 | `W_FANOUT_EXCEEDED` | 扇出超限 | 🟡 |
 | `W_DUPLICATE_SIBLING` | 兄弟节点重复 | 🟡 |
+
+> ⚑ **为什么 `W_TITLE_TOO_LONG` 是 🟡，而 `E_EMPTY_TITLE` 仍是 🔴**（2026-09-22 降的级）
+>
+> 两者坏的程度不一样：
+>
+> | | 用户看到什么 | 图还能用吗 |
+> |---|---|---|
+> | `E_EMPTY_TITLE` | 一格**空白**，他不知道那里该有什么 | ✗ 图是坏的 |
+> | `W_TITLE_TOO_LONG` | 内容完整，只是**宽了一点** | ✓ 图是能用的 |
+>
+> 而 🔴 的代价很重：`hasBlockingIssue()` 会拦住"开始执行" ——
+> 于是**一个节点宽了 2 个字，整张图不能开工**。代价和收益不成比例。
+>
+> ⚑ 它原来也是 🔴，而它和 `W_DEPTH_EXCEEDED` / `W_FANOUT_EXCEEDED`
+> **是同一类东西**（某个尺寸超了）—— 这张表原来就自相矛盾。现在三条统一成 🟡，
+> 前缀也跟着统一成 `W_`。
+>
+> ⚠️ **宽度约束本身没有取消**：12 字上限还在，前端 168px 的节点宽度仍按它算
+> （`frontend/src/lib/layout.ts`）。用户照样在问题条上看得见这条 —— 只是不再被拦住，
+> 他可以先开着工，回头再改那个标题。
+>
+> ⚠️ 降级**不改评测的严格度**：`corpus.json` 里 `allowed_warnings` 全是 `[]`，
+> 而 `runner.py` 的 `judge_structure` 判红的条件是「有 error」**或**
+> 「有 warning 不在白名单里」。所以 §8.3 种子 #11「标题 ≤ 12 字」照样红 ✓
 
 **② 读取期**（对**已存 `outline`**，此时是 `parent_id`/`order` 表示 —— 前端与 Java 都要跑）
 

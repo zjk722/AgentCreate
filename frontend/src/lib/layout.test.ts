@@ -226,7 +226,7 @@ describe('layout · 默认参数', () => {
     expect(r.width).toBeGreaterThanOrEqual(maxX)
   })
 
-  it('节点盒子够大，能容下 12 字标题（§7.2 的 E_TITLE_TOO_LONG 上限）', () => {
+  it('节点盒子够大，能容下 12 字标题（§7.2 的 W_TITLE_TOO_LONG 上限）', () => {
     // 12 个中文字按 14px 字号约 168px 宽，加上内边距 —— 默认宽度必须 ≥ 这个数
     expect(DEFAULT_LAYOUT.nodeWidth).toBeGreaterThanOrEqual(168)
   })

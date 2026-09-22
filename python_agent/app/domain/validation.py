@@ -21,7 +21,7 @@ from typing import Any
 
 from app.planner.outline import level_breaks, level_parents
 
-# §7.2 ① 的 `E_TITLE_TOO_LONG`：标题 > 12 字 → **超过**才算错，12 字正好合规。
+# §7.2 ① 的 `W_TITLE_TOO_LONG`：标题 > 12 字 → **超过**才算错，12 字正好合规。
 TITLE_MAX = 12
 
 # 层级基准：根是 level 1（用户 2026-09-15 定的）。
@@ -63,10 +63,36 @@ def validate_generated(
 
 
 def _check_titles(level_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """`E_EMPTY_TITLE` / `E_TITLE_TOO_LONG`（都是 🔴 阻断）。
+    """`E_EMPTY_TITLE`（🔴 阻断）/ `W_TITLE_TOO_LONG`（🟡 提示）。
 
     ⚑ 标题**缺失**也算空标题：模型没给 title 时，用户看到的同样是"这一格是空的"，
        报成同一个 code 才修得动。（§7.2 ① 里没有"字段缺失"这一类，见 _require_checkable）
+
+    ⚑ **为什么超长是 🟡 而空标题是 🔴**（2026-09-22 降的级，原来两个都是 🔴）——
+      两者坏的程度不一样：
+
+        空标题     用户看到的是一格**空白**，他不知道那里该有什么  → 图是坏的
+        超长标题   内容完整，只是**宽了一点**                      → 图是能用的
+
+      而 🔴 的后果很重：§7.1 的 `hasBlockingIssue()` 会拦住"开始执行"，
+      于是**一个节点宽了 2 个字，整张图不能开工**。代价和收益不成比例。
+      （实测来源：seed-05 跑批 4/5 次红，三次真凶是 `HTTP/1.1到HTTP/3` 这类
+        **两个英文术语并列**的标题 —— 内容没错，就是长。）
+
+      ⚑ 降级前它和 `W_DEPTH_EXCEEDED` / `W_FANOUT_EXCEEDED` 是**同一类东西**
+        （某个尺寸超了），而那两条一直是 🟡 —— §7.2 ① 那张表原来就自相矛盾。
+        现在三条统一成 🟡，前缀也跟着统一成 `W_`（`E_` 在本仓库一律表示阻断，
+        名字不改就是**报的话会撒谎** —— 同 §7.2 里 `E_DEP_ON_CONTAINER` /
+        `W_CONTAINER_DEPS_UNREAD` 那条"首词不同"的规矩）。
+
+      ⚠️ 宽度约束本身**没有取消**：12 字上限还在，前端 168px 的节点宽度也是按它算的
+        （`frontend/src/lib/layout.ts`）。用户照样在问题条上看得见这条，只是不再被拦住 ——
+        他可以先开着工，回头再改那个标题。
+
+      ⚠️ 降级**不改评测的严格度**：corpus 里 12 颗种子的 `allowed_warnings` 全是 `[]`，
+        而 `evals/runner.py` 的 `judge_structure` 判红的条件是「有 error」**或**
+        「有 warning 不在白名单里」。所以 §8.3 seed #11 的「标题 ≤ 12 字」照样红 ——
+        变的只是**用户会不会被拦住**。
     """
     issues = []
     for i, raw in enumerate(level_nodes):
@@ -80,8 +106,8 @@ def _check_titles(level_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if n > TITLE_MAX:
             issues.append(
                 _issue(
-                    "error",
-                    "E_TITLE_TOO_LONG",
+                    "warning",
+                    "W_TITLE_TOO_LONG",
                     f"{_where(i, raw)}：标题 {n} 字，超过 {TITLE_MAX} 字上限"
                     f"（{title.strip()[:20]!r}）",
                 )
