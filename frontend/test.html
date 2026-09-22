@@ -198,6 +198,28 @@
             `用量 <b>${u.input_tokens ?? '?'} in / ${u.output_tokens ?? '?'} out</b> · ` +
             `后端耗时 <b>${u.elapsed_ms ?? '?'} ms</b> · 端到端 <b>${secs} 秒</b></div>`
 
+          // ⚑ 指纹：回答"这个结果是不是【新那版】Prompt 跑出来的"。
+          //
+          //   改完 prompts.py，uvicorn 的 --reload 会自己重载 ✓ ——
+          //   但**什么时候重载完、旧 worker 有没有退干净，从外面看不出来** ✗
+          //   表现就是"有时候结果对、有时候不对"，而页面上一切正常（#13）。
+          //
+          //   → 把指纹摆出来，打到旧 worker 的请求**立刻现形** ✓
+          //   对照物：`make prompt` 会打印【磁盘上】那一版的指纹，两边对着看。
+          html +=
+            `<div class="meta">Prompt 指纹 <b><code>${esc(body.prompt_fingerprint ?? '？')}</code></b>` +
+            ` <span class="sub">← 改了 prompts.py 之后它应该变；不变就是没生效</span></div>`
+
+          // ⚑ 没有这个字段 → 这不像"新后端"，更像**后端跑的是旧代码** ✗
+          //   （和上面 depends_on 那个启发式同一个道理：分不清"没做"和"没生效"，
+          //     人就会往错的方向查）
+          if (!body.prompt_fingerprint) {
+            html +=
+              '<div class="warn amber">⚠️ 响应里没有 <code>prompt_fingerprint</code> —— ' +
+              '这不像新后端，更像<b>后端跑的是旧代码</b> ✗<br>' +
+              '→ <b>重启后端</b>最省事（<code>netstat -ano | findstr ":8000"</code> 看看有几个在听）</div>'
+          }
+
           for (const i of body.issues) {
             html += `<div class="warn ${i.severity === 'error' ? 'red' : 'amber'}">` +
               `${i.severity === 'error' ? '🔴' : '🟡'} <code>${esc(i.code)}</code> ${esc(i.message)}</div>`
