@@ -52,7 +52,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from app.workflows.plan import plan_goal
+from app.workflows.plan import plan_goal, prompt_fingerprint
 
 EVALS_DIR = Path(__file__).resolve().parent
 CORPUS = EVALS_DIR / "corpus.json"
@@ -72,6 +72,23 @@ def corpus_fingerprint() -> str:
       ⚑ 那正是 #13 的形状：**它不报错，只是给你一个错的结论。**
     """
     return hashlib.sha256(CORPUS.read_bytes()).hexdigest()[:12]
+
+
+# ⚑ **两个指纹看起来像，处置【正好相反】—— 别把它们混成一种。**（2026-09-23）
+#
+#     `corpus_fingerprint()`   = **尺子**
+#         断言变了，旧基线量的是**别的东西** ⇒ 对不上就【拒绝拿来比】（上面那个 return 2）
+#
+#     `prompt_fingerprint()`   = **被测对象**
+#         Prompt 变了，那**正是评测要量的东西** ⇒ 对不上【照常比】，而且**必须**比 ✓
+#
+# ⚠️ 把 Prompt 指纹也拿去做"对不上就拒绝"的门禁 = **让评测没法量 Prompt 改动**，
+#    而那正是这个评测存在的理由：
+#    §14.2 #10 说「改 Prompt 是改 A 坏 B」—— 要实现那句话，你要的是
+#    "改完能量出 A 掉了多少"，**不是**"改完不许跑" ✗
+#
+# 所以 Prompt 指纹在这里的角色只有两个：**记录**（写进 baseline.json）+ **显示**
+# —— 让你看分数变化时知道"这里面含 Prompt 的变化"。
 
 # 每条种子跑几次。12 颗 × 5 = 60 —— 正好是 §12 给 A1 写的"60 条用例"。
 RUNS = 5
@@ -461,10 +478,24 @@ def _cell(checked: bool, passed: int, runs: int) -> str:
 
 
 def render(
-    results: list[dict[str, Any]], baseline: dict[str, Any] | None, runs_per_seed: int
+    results: list[dict[str, Any]],
+    baseline: dict[str, Any] | None,
+    runs_per_seed: int,
+    baseline_prompt: str | None = None,
 ) -> bool:
-    """打印报告。返回"有没有退化"（True = 有）。"""
+    """打印报告。返回"有没有退化"（True = 有）。
+
+    `baseline_prompt` 是**基线里记的** Prompt 指纹（没有基线时为 None）——
+    只用来提示，**不参与任何判定**（见 `corpus_fingerprint` 下面那段说明）。
+    """
+    now = prompt_fingerprint()
     print(f"每条种子跑 {runs_per_seed} 次 · 共 {len(results) * runs_per_seed} 次调用")
+    print(f"Prompt 指纹：{now}（改了 prompts.py 就该变；`make prompt` 印的是同一个值）")
+    # ⚑ 和基线不同时**只提示、不拦** —— Prompt 是**被测对象**，不是尺子。
+    #   这一句是给人看的："下面的分数变化里包含 Prompt 的变化"。
+    if baseline_prompt is not None and baseline_prompt != now:
+        print(f"   ⚑ 基线是 {baseline_prompt} 版 Prompt 跑的 ⇒ 下面的分数变化里")
+        print("     **包含 Prompt 的变化**（那正是你在量的东西，所以照常对比）。")
     print()
     print("⚠️ 语义层（LLM-as-judge，`judges.py`）**还没做** —— 下面的判定只包含")
     print("   结构 / 分布 / 覆盖 / 编造 四层。")
@@ -609,6 +640,8 @@ def main() -> int:
         return 1
 
     baseline = None
+    # ⚑ 基线里记的 Prompt 指纹 —— **只用来提示，不参与判定**（见 corpus_fingerprint 后面那段）
+    baseline_prompt: str | None = None
     if BASELINE.exists():
         raw = json.loads(BASELINE.read_text(encoding="utf-8"))
         stale = raw.get("corpus") != corpus_fingerprint()
@@ -633,6 +666,7 @@ def main() -> int:
             print()
         else:
             baseline = raw.get("seeds") or {}
+            baseline_prompt = raw.get("prompt")
 
     try:
         try:
@@ -651,7 +685,7 @@ def main() -> int:
         print(f"⚠️ 只跑了 {len(results)} 条（--only）—— 别把这份报告读成「全部种子」的结果。")
         print()
 
-    regressed = render(results, baseline, args.runs)
+    regressed = render(results, baseline, args.runs, baseline_prompt)
 
     # 跑了全部种子，还是只跑了几条？后面几处措辞都要跟着变 ——
     # 不然一份"只跑了一条"的报告会被读成"全部种子都合格"。
@@ -665,9 +699,17 @@ def main() -> int:
         for r in results:
             merged[r["id"]] = {"pass": r["passed"], "tier": r["tier"]}
         BASELINE.write_text(
-            # ⚑ 连**指纹**一起写 —— 下次跑的时候先比它，对不上就拒绝拿来比（见 corpus_fingerprint）
+            # ⚑ 连**两个指纹**一起写，但它们的用法**完全不同**：
+            #     · `corpus` —— 下次跑先比它，对不上就**拒绝**拿来比（尺子换了）
+            #     · `prompt` —— 只**记下来**，下次跑时提示"分数变化里含 Prompt 的变化"
+            #                   （Prompt 是【被测对象】，不许拿它拦对比）
+            #    见 corpus_fingerprint 后面那段说明。
             json.dumps(
-                {"corpus": corpus_fingerprint(), "seeds": merged},
+                {
+                    "corpus": corpus_fingerprint(),
+                    "prompt": prompt_fingerprint(),
+                    "seeds": merged,
+                },
                 ensure_ascii=False,
                 indent=2,
             )
