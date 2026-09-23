@@ -54,6 +54,27 @@ function expectClean(outline: OutlineNode[], what = '', allow: IssueCode[] = [])
   expect(issues, `${what} 产生了坏数据：${JSON.stringify(issues, null, 2)}`).toEqual([])
 }
 
+/**
+ * ⚑ 点名例外：`ml-knowledge` 的**根**标题有 13 字，超了 §7.2 ① 的 12 字上限。
+ *
+ * **这不是数据写错，是一条规则冲突** —— 那份 mock 是按 §8.3 种子 #1 造的，
+ * 根标题直接抄了目标原文「整理一下机器学习的知识体系」，而**目标常常 > 12 字**。
+ * 模型很自然地会拿目标原文当根标题 ⇒ 真跑一次大概也会报同一条。
+ * （`evals/corpus.json` 里 `allowed_warnings` 是 `[]`，所以 seed-01 大概率也会因此红。）
+ *
+ * ⚠️ **处置待定，属 prompt / 产品的决定，不是代码的**：
+ *    要么让 prompt 要求"根标题要概括、别照抄目标"，
+ *    要么承认根节点不受 12 字限制。
+ *    **定下来之前先把信号留在这里 —— 别静默消掉**：
+ *    消掉之后你会以为它已经没问题了，而那正是 #13 的形状。
+ *
+ * ⚑ 只对 ml-knowledge 生效，**不是全局放宽** —— 否则以后别的数据集里
+ *   多出一个超长标题，这里会毫无反应，而它本来就该红。
+ */
+function knownOverlong(datasetKey: string): IssueCode[] {
+  return datasetKey === 'ml-knowledge' ? ['W_TITLE_TOO_LONG'] : []
+}
+
 /** 某个父亲下的孩子标题，按 order 排好 —— 断言"顺序"最直观的形式。 */
 function childrenOf(outline: OutlineNode[], parentId: string | null): string[] {
   return siblingsOf(outline, parentId).map((n) => n.title)
@@ -333,6 +354,9 @@ describe('moveNode · 在所有 mock 数据集上穷举', () => {
             expectClean(r.outline, `把「${from.title}」挪到「${to.title}」的 ${pos} 位之后，`, [
               'E_DEP_ON_CONTAINER',
               'W_CONTAINER_DEPS_UNREAD',
+              // ⚑ ml-knowledge 的根标题本来就超长（理由见 knownOverlong）——
+              //   拖动**不会**让它变长或变短，所以它不是"拖出来的"
+              ...knownOverlong(d.key),
             ])
           }
         }
@@ -391,7 +415,7 @@ describe('坏数据可以被改回主树', () => {
     expect(buildTree(outline).detached, '还有节点没回到树上').toEqual([])
   })
 
-  it('⚠️ 但【依赖图】那两个问题改不了 —— 详情面板里没有编辑 depends_on 的入口', () => {
+  it('⚠️ 但【依赖图】和【标题】那几类问题改不了 —— 界面里没有对应的入口', () => {
     // ⚑ 这条不是"测试通过"，是**把一个已知缺口钉住**。
     //
     //   结构问题（parent_id）现在能修了；依赖问题（depends_on）还不能 ——
@@ -424,6 +448,14 @@ describe('坏数据可以被改回主树', () => {
         'E_CYCLE_DEP',
         // 这个是【原样保留】的：重复 id 没法靠移动节点消掉
         'E_DUPLICATE_ID',
+        // ⚑ 这三个（§7.2 ① 组，2026-09-22 加的）同样是**一开始就有**的，
+        //   而且**结构编辑改不了它们** —— 改标题、删掉重名的那一个，
+        //   都得有别的入口（现在还只有"拖动改层级"这一种编辑）。
+        //   ⚠️ 所以它们在这里不是"拖出来的新问题"，是"还改不了的旧问题" ——
+        //   这条断言的用意（不许自己造新问题）仍然完整。
+        'E_EMPTY_TITLE',
+        'W_TITLE_TOO_LONG',
+        'W_DUPLICATE_SIBLING',
       ]),
     )
   })
@@ -680,7 +712,8 @@ describe('deleteNode · 在所有 mock 数据集上穷举', () => {
           const r = deleteNode(d.outline, n.id, mode)
           if (!r.ok) continue
           ok++
-          expectClean(r.outline, `删「${n.title}」(${mode}) 之后，`)
+          // ⚑ 同上：根标题超长是 ml-knowledge 自带的，删节点不会改变它
+          expectClean(r.outline, `删「${n.title}」(${mode}) 之后，`, knownOverlong(d.key))
         }
       }
       expect(ok, '一次成功的删除都没有，这个穷举等于没跑').toBeGreaterThan(0)
