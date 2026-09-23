@@ -463,7 +463,7 @@ map_edit_proposals (
 200 个节点 × 每条摘要数十字符是可接受的；换成完整输出（一次检索可能上千字）会把
 outline 撑爆，而 §4.3 明确要求 outline 是「写入原子、整批替换」的字段。
 
-**长度约束**：建议由生成侧截断到 ~40 字，超长截断加省略号 —— 与 `E_TITLE_TOO_LONG`
+**长度约束**：建议由生成侧截断到 ~40 字，超长截断加省略号 —— 与 `W_TITLE_TOO_LONG`
 同理，界面上放不下的东西不该进存储。
 
 > ⚠️ **相关的并行缺口**：失败原因（§4.1 `execution_tasks.error`）同样没有进 `outline`。
@@ -841,9 +841,9 @@ Java worker ──publish──▶ Redis
 
 ```jsonc
 {
-  "severity": "error",            // error | warning
+  "severity": "warning",          // error | warning
   "node_id": "7d2e8b45a901",
-  "code": "E_TITLE_TOO_LONG",
+  "code": "W_TITLE_TOO_LONG",
   "message": "标题 34 字，超过 12 字上限：'...'"
 }
 ```
@@ -861,10 +861,65 @@ Java worker ──publish──▶ Redis
 | `E_MULTIPLE_ROOTS` | 根节点数 ≠ 1 | 🔴 |
 | `E_LEVEL_SKIP` | 层级跳跃 | 🔴 |
 | `E_EMPTY_TITLE` | 空标题 | 🔴 |
-| `E_TITLE_TOO_LONG` | 标题 > 12 字 | 🔴 |
+| `W_TITLE_TOO_LONG` | 标题 > 12 字 | 🟡 |
 | `W_DEPTH_EXCEEDED` | 深度超限 | 🟡 |
 | `W_FANOUT_EXCEEDED` | 扇出超限 | 🟡 |
 | `W_DUPLICATE_SIBLING` | 兄弟节点重复 | 🟡 |
+
+> ⚑ **为什么 `W_TITLE_TOO_LONG` 是 🟡，而 `E_EMPTY_TITLE` 仍是 🔴**（2026-09-22 降的级）
+>
+> 两者坏的程度不一样：
+>
+> | | 用户看到什么 | 图还能用吗 |
+> |---|---|---|
+> | `E_EMPTY_TITLE` | 一格**空白**，他不知道那里该有什么 | ✗ 图是坏的 |
+> | `W_TITLE_TOO_LONG` | 内容完整，只是**宽了一点** | ✓ 图是能用的 |
+>
+> 而 🔴 的代价很重：`hasBlockingIssue()` 会拦住"开始执行" ——
+> 于是**一个节点宽了 2 个字，整张图不能开工**。代价和收益不成比例。
+>
+> ⚑ 它原来也是 🔴，而它和 `W_DEPTH_EXCEEDED` / `W_FANOUT_EXCEEDED`
+> **是同一类东西**（某个尺寸超了）—— 这张表原来就自相矛盾。现在三条统一成 🟡，
+> 前缀也跟着统一成 `W_`。
+>
+> ⚠️ **宽度约束本身没有取消**：12 字上限还在，前端 168px 的节点宽度仍按它算
+> （`frontend/src/lib/layout.ts`）。用户照样在问题条上看得见这条 —— 只是不再被拦住，
+> 他可以先开着工，回头再改那个标题。
+>
+> ⚠️ 降级**不改评测的严格度**：`corpus.json` 里 `allowed_warnings` 全是 `[]`，
+> 而 `runner.py` 的 `judge_structure` 判红的条件是「有 error」**或**
+> 「有 warning 不在白名单里」。所以 §8.3 种子 #11「标题 ≤ 12 字」照样红 ✓
+
+> ⚑ **① 组的分组依据是「检查时机」，不是「谁能算」**（2026-09-22 补）
+>
+> 上面那张表是按【检查时机 + 数据表示】分的 —— 但这 7 条在"**谁能算**"
+> 这个维度上**并不齐**，别把它读成"只有 Python 算得了"：
+>
+> | ① 组的 code | 依赖 `level` 表示吗 | 谁能算 |
+> |---|---|---|
+> | `E_MULTIPLE_ROOTS` | 否 | **前端早就在算**（`lib/outline.ts` 第 5 步）|
+> | `E_EMPTY_TITLE` / `W_TITLE_TOO_LONG` / `W_DUPLICATE_SIBLING` | 否 | 前端**也算**（第 7 步，2026-09-22 加的）|
+> | `W_DEPTH_EXCEEDED` / `W_FANOUT_EXCEEDED` | 否 | **算不了 —— 缺参数**（见下）|
+> | `E_LEVEL_SKIP` | **是** | 只有生成期能判，而且**永远不需要重判** |
+>
+> `E_MULTIPLE_ROOTS` 是这一条的关键证据：**它本来就是 ① 组的，而前端一直在算它。**
+> 所以"① 组的 code 不该出现在前端"从来就不成立 —— 那只是原注释把
+> 【谁产出】和【谁能算】当成了一件事。
+>
+> **为什么前端自己算更好**：这几条**永远新鲜**。用户把长标题改短，警告当场消失。
+> 若改成读后端存的那一份（§4.1 `maps.issues`），还得先定"编辑之后谁刷新它" ——
+> 而那条规矩**文档里没有**（§5.3 明说 revise 流"全程不写库"）。
+>
+> **`E_LEVEL_SKIP` 为什么不需要重判**：跳级的图 `assemble()` 直接抛错、
+> 树根本装不出来 ⇒ 进不了存储；而在 `parent_id` 表示里深度是**派生值**，
+> "跳一级"这种状态压根表达不出来。
+>
+> **深度 / 扇出为什么算不了**：它们要 `max_depth` / `max_children`，而那是
+> **每张图不同的请求参数**（§8.3 的种子就有 6 和 9 两种），
+> 而 `maps` 表（§4.1）和 `INTEGRATION.md` 里**都没有**这两个字段。
+> ⚠️ 编个默认 3/6 会**撒谎** —— 所以前端宁可不查。
+> **这两条现在是"没查"，不是"没问题"**（同一个道理见 §7.2 那 7 条里的
+> `W_CONTAINER_DEPS_UNREAD`、以及 `runner.py` 的 `NOT_CHECKED`）。
 
 **② 读取期**（对**已存 `outline`**，此时是 `parent_id`/`order` 表示 —— 前端与 Java 都要跑）
 

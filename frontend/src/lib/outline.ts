@@ -204,7 +204,123 @@ export function buildTree(outline: OutlineNode[]): BuildResult {
    *    两张图用的算法完全不同，所以拆成独立一步，不要混进上面几步里。 */
   validateDependencies(byId, issues)
 
+  /* ── 第 7 步：标题与兄弟重名（§7.2 的 ① 组，前端也算得出的那几条）──
+   * ⚑ ① 组跑在**读侧**看起来违背 §7.2 的分组，其实不是：
+   *   分组是按【检查时机 + 数据表示】分的，而这几条**不依赖 `level` 表示** ——
+   *   用 `parent_id` / `title` 就能算。
+   *
+   * ⚑ 在这里算的额外好处：**永远新鲜**。用户把长标题改短，警告当场消失。
+   *   若改成读后端存的那一份（§4.1 的 `maps.issues`），就得先定
+   *   "编辑之后谁刷新它" —— 而那条规矩文档里没有。完整理由见
+   *   `types/outline.ts` 的 `IssueCode`。 */
+  validateTitles(byId, issues)
+  validateDuplicateSiblings(byId, issues)
+
   return { roots, detached, issues }
+}
+
+/* ── §7.2 ① 组里前端也算得出的那几条 ─────────────────────── */
+
+/**
+ * 标题长度上限（§7.2 ① 的 `W_TITLE_TOO_LONG`）：**超过** 12 才算错，12 字正好合规。
+ *
+ * ⚠️ 这是**第二份实现** —— 第一份在 Python 的 `app/domain/validation.py`（`TITLE_MAX`）。
+ *    两边必须都是 12，改一个就要改另一个。**唯一真相源是 `DEV_DOC` §7.2 ① 那张表**，
+ *    这两个常数都只是它的抄本。
+ *    （性质和 `containerIds()` 那份"五处必须一致"的清单一样 —— 只是这次只有两处。）
+ */
+export const TITLE_MAX = 12
+
+/**
+ * 空标题 / 标题超长（§7.2 ① 的头两条）。
+ *
+ * ⚑ 长度用 `.length`（UTF-16 码元）而不是码点 —— 和 Python 的 `len()` 在**中文上一致**
+ *   （CJK 都在 BMP 内，一字一码元）。emoji 之类的补充平面字符会不一致
+ *   （这里数 2、Python 数 1），但那不是这个产品的内容。
+ */
+function validateTitles(byId: Map<NodeId, OutlineNode>, issues: StructureIssue[]): void {
+  for (const n of byId.values()) {
+    const title = (n.title ?? '').trim()
+
+    if (!title) {
+      // 🔴 阻断：用户看到一格空白，他不知道那里该有什么 —— 图是真坏的
+      issues.push({
+        severity: 'error',
+        node_id: n.id,
+        code: 'E_EMPTY_TITLE',
+        message: '标题是空的',
+      })
+      continue
+    }
+
+    if (title.length > TITLE_MAX) {
+      // 🟡 提示（2026-09-22 从 🔴 降的）：内容完整，只是宽了一点，不该拦住开工
+      issues.push({
+        severity: 'warning',
+        node_id: n.id,
+        code: 'W_TITLE_TOO_LONG',
+        message: `标题 ${title.length} 字，超过 ${TITLE_MAX} 字上限（「${title.slice(0, 20)}」）`,
+      })
+    }
+  }
+}
+
+/**
+ * 同一父节点下的同名兄弟（`W_DUPLICATE_SIBLING`）。
+ *
+ * ⚑ 判据是 `parent_id` 分组 + `title` 全等 —— 和 Python 的
+ *   `_check_duplicate_siblings` 同一个口径（§7.2 ① 组里这两份实现必须对得上）。
+ *
+ * ⚑ 空标题的节点**不参与** —— 它们已经被 `E_EMPTY_TITLE` 报过了，
+ *   再报一次"同名"只会让问题条更吵（§7.3 那条"报警疲劳"）。
+ *
+ * ⚠️ 范围是【全部节点】，含挂不上主树的游离节点 —— 和 `validateDependencies`
+ *   的口径一致。游离节点的 `parent_id` 指向一个不存在的 id，但它们**照样自称**
+ *   有共同父亲；把它们排除掉就漏了"两个孤儿重名"这种真实情况。
+ *   代价是那种情况下 message 只能印父节点的 **id**（它的标题查不到），这是对的。
+ */
+function validateDuplicateSiblings(
+  byId: Map<NodeId, OutlineNode>,
+  issues: StructureIssue[],
+): void {
+  const byParent = new Map<NodeId | null, OutlineNode[]>()
+  for (const n of byId.values()) {
+    const kids = byParent.get(n.parent_id)
+    if (kids) kids.push(n)
+    else byParent.set(n.parent_id, [n])
+  }
+
+  for (const [parentId, kids] of byParent) {
+    const byTitle = new Map<string, OutlineNode[]>()
+    for (const k of kids) {
+      const title = (k.title ?? '').trim()
+      if (!title) continue
+      const group = byTitle.get(title)
+      if (group) group.push(k)
+      else byTitle.set(title, [k])
+    }
+
+    for (const [title, dupes] of byTitle) {
+      if (dupes.length < 2) continue
+
+      const parent = parentId === null ? null : byId.get(parentId)
+      const where =
+        parentId === null ? '根节点下' : `「${parent?.title?.trim() || parentId}」下`
+      // 排序只为了让 message 稳定可断言，不影响判定
+      const orders = dupes
+        .map((d) => d.order)
+        .sort((a, b) => a - b)
+        .join('、')
+
+      issues.push({
+        severity: 'warning',
+        // ⚑ null：一对重名兄弟没有单一归属，挂给谁都是偏心（Python 同样给 null）
+        node_id: null,
+        code: 'W_DUPLICATE_SIBLING',
+        message: `${where} 有 ${dupes.length} 个同名兄弟「${title}」（order ${orders}）`,
+      })
+    }
+  }
 }
 
 /**

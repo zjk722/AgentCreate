@@ -65,7 +65,9 @@ export interface LayoutResult {
 }
 
 export const DEFAULT_LAYOUT: LayoutOptions = {
-  // 168px 是能容下 §7.2 上限的 12 个中文字（E_TITLE_TOO_LONG）的最小宽度
+  // 168px 是能容下 §7.2 上限的 12 个中文字（W_TITLE_TOO_LONG）的最小宽度
+  // ⚑ 那条规则 2026-09-22 从 🔴 降成了 🟡（不再阻断开工），但**12 字上限本身没动** ——
+  //   它是给这个宽度用的，所以下面这个数的推导不受影响。
   nodeWidth: 168,
   // 68px 放得下三行：标题 / 状态元信息 / 产出摘要（result_summary）。
   // ⚠️ 节点尺寸必须【统一】—— d3.tree 的 nodeSize 假定等高，

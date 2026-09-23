@@ -13,6 +13,10 @@
     编造   —— 标题里不许出现的东西（`must_not_match` 正则）       ✅ 做了
     语义   —— LLM-as-judge（`judges.py`）                        ❌ **还没做**
 
+⚠️ 而这四层的"做了"**不等于每颗种子都查了**：没写那一格断言的种子
+   （骨架那几颗，`distribution` / `coverage` / `must_not_match` 是 `null`）
+   报告里印 `—`，**不是** `5/5` —— 见下面的 `NOT_CHECKED`。
+
 ⚑ 语义层没做这件事会**打印在报告最上面**，不静默跳过（#13）。
 
 **怎么算"这条种子合格"**（按档；阈值在下面的 `TIER_MIN_PASS`）：
@@ -88,8 +92,64 @@ def _need(tier: str, runs: int) -> int:
 
 TIER_LABEL = {"green": "🟢 正常", "yellow": "🟡 边界", "red": "🔴 Bad Case"}
 
+# 失败详情里最多印几个标题（2026-09-22 提成常量，原来是个裸的 12）。
+# ⚑ 截断本身没问题（40 个节点的图会把报告淹掉），**问题是别截得无声无息** ——
+#   要印"另有 N 个没印出来"。见 run_seed。
+TITLE_PREVIEW = 12
+
 
 # ── 四层断言 ─────────────────────────────────────────────────
+
+
+class _NotChecked:
+    """这一层**没有断言可查**（spec 是 `null` / 空）。
+
+    ⚑ 它存在的唯一理由：把「**没接线**」和「**过了**」分开。
+
+      以前两者都是 `None` —— 于是骨架种子在报告里印出
+      「分布 5/5 · 覆盖 5/5 · 编造 5/5」，和**真查过**的种子长得一模一样。
+      结果是"只查了 error"被读成"四层都验过了"✗
+
+      ⚠️ 这正是 #13 的形状：**它不报错，只是给你一个看不出差别的数。**
+
+    ⚑ 为什么不改成"在报告那边判断这层该不该查"：
+      那就是**第二份实现** —— 判定函数里已经有「空 spec 就早退」这件事了，
+      报告再判一次，两份迟早不一致（"判定说查过、报告说没查"）。
+      这和 `coverage_hits()` 那条规矩是同一个道理：**"谁中了"/"查了没"只能有一处实现。**
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        # 报告里不直接印它（印的是 `—`），但调试时别显示成 <object at 0x…>
+        return "NOT_CHECKED"
+
+
+NOT_CHECKED = _NotChecked()
+
+
+def _brief(issues: list[dict[str, Any]], limit: int = 3) -> str:
+    """把 issue 摊成人话：`code` 只说【哪条规则】，`message` 才说【哪儿错了】。
+
+    ⚑ 为什么要它（2026-09-22）：原来只印 `code`，于是 seed-05 的跑批报告写着
+
+        有 1 个阻断性 error：E_TITLE_TOO_LONG
+
+      而 `domain/validation.py` 生成的 message 里**明明写着**
+      「第 12 个节点（下标 11）「HTTP/1.1到HTTP/3」：标题 15 字，超过 12 字上限」。
+      **信息本来就有，在报告这一层被扔了** —— 定位真凶只能靠人工数字数。
+
+    ⚑ 上面那句引文里的 code，当天晚些时候改名成 `W_TITLE_TOO_LONG` 并降成 🟡
+      （见 §7.2 ① 的说明）。引文**保留原样** —— 那是当时报告真正印出来的字，
+      改掉它就成了伪造历史。它现在走下面那条**白名单分支**，不是 error 分支。
+
+    ⚠️ `limit` 是必要的：一个 40 节点的图可能有十几条 error，
+       全摊出来会把报告淹掉。**但"还有几条没印"必须说出来** —— 不然又是静默截断。
+    """
+    shown = [f"[{i['code']}] {i['message']}" for i in issues[:limit]]
+    if len(issues) > limit:
+        shown.append(f"…另有 {len(issues) - limit} 条未展开")
+    return "；".join(shown)
 
 
 def judge_structure(
@@ -99,16 +159,26 @@ def judge_structure(
 
     ⚑ `error` 恒为 0 是**通用规则**，没写在 12 条数据里（见 README）——
        因为 `error` 的意思就是"这张图不能开工"（§7.1），没有哪条种子该容忍它。
+
+    ⚑ 这一层**从不返回 `NOT_CHECKED`**：上面那条通用规则的意思就是
+       "哪怕 `structure` 里只写了 `allowed_warnings`，它也**确实在查**东西"。
+       别的三层都可能没接线，这一层不会。
+
+    ⚑ **降级成 🟡 的检查落在这里的白名单分支** —— 这就是严重度和评测强度
+      **互相独立**的原因。`W_TITLE_TOO_LONG` 2026-09-22 从 🔴 降成 🟡，
+      而 12 颗种子的 `allowed_warnings` 全是 `[]`，所以它照样判红：
+      ⇒ **用户不再被拦住开工（§7.1 的闸门），但 §8.3 种子 #11 的断言一条没松。**
+      改严重度时别指望这里会跟着变 —— 它不该变。
     """
     errors = [i for i in issues if i["severity"] == "error"]
     if errors:
-        return f"有 {len(errors)} 个阻断性 error：{'、'.join(i['code'] for i in errors)}"
+        return f"有 {len(errors)} 个阻断性 error：{_brief(errors)}"
 
     allowed = set(spec.get("allowed_warnings", []))
     bad = [i for i in issues if i["code"] not in allowed]
     if bad:
         # ⚑ 白名单的报错要**具体到 code** —— 说"warning 有 2 条"等于没说（见 README）。
-        return f"出现了不在白名单里的 warning：{'、'.join(i['code'] for i in bad)}"
+        return f"出现了不在白名单里的 warning：{_brief(bad)}"
 
     n = len(nodes)
     bounds = spec.get("node_count", {})
@@ -120,7 +190,9 @@ def judge_structure(
     return None
 
 
-def judge_distribution(nodes: list[dict[str, Any]], spec: dict[str, Any]) -> str | None:
+def judge_distribution(
+    nodes: list[dict[str, Any]], spec: dict[str, Any]
+) -> "str | None | _NotChecked":
     """③ `distribution`：每种 `assignee` 的数量范围。
 
     ⚠️ 这个字段有一阵子**根本没被检查** —— 数据里写着，而 runner 不读它。
@@ -128,7 +200,7 @@ def judge_distribution(nodes: list[dict[str, Any]], spec: dict[str, Any]) -> str
        seed-03 的「user: {min: 2}」当时就是这么白写的：看着像断言，实际不起作用。
     """
     if not spec:
-        return None
+        return NOT_CHECKED
 
     counts = Counter(n["assignee"] for n in nodes)
     for who, bounds in spec.items():
@@ -154,7 +226,9 @@ def coverage_hits(
     return [(tuple(g), any(w in titles for w in g)) for g in groups]
 
 
-def judge_coverage(nodes: list[dict[str, Any]], spec: dict[str, Any]) -> str | None:
+def judge_coverage(
+    nodes: list[dict[str, Any]], spec: dict[str, Any]
+) -> "str | None | _NotChecked":
     """② 覆盖。`must_contain` 里**每一项是一个方向**（一组同义词），命中任一即算这个方向中。
 
     ⚑ 为什么是"一组"而不是一个词：模型对同一个概念有**多种说法**
@@ -167,7 +241,10 @@ def judge_coverage(nodes: list[dict[str, Any]], spec: dict[str, Any]) -> str | N
     """
     hits = coverage_hits(nodes, spec)
     if not hits:
-        return None
+        # ⚑ 一个方向都没写 → **没得查**，不是"查了没问题"。
+        #   注意判据是 `hits`（`must_contain` 里的方向数），不是 `spec` 本身 ——
+        #   只写了 `min_hit_rate` 而没有方向的话，这一层同样什么都没查。
+        return NOT_CHECKED
 
     good = [g for g, ok in hits if ok]
     rate = len(good) / len(hits)
@@ -185,7 +262,9 @@ def judge_coverage(nodes: list[dict[str, Any]], spec: dict[str, Any]) -> str | N
 # ── 跑一条种子 ───────────────────────────────────────────────
 
 
-def judge_no_fabrication(nodes: list[dict[str, Any]], spec: list[str]) -> str | None:
+def judge_no_fabrication(
+    nodes: list[dict[str, Any]], spec: list[str]
+) -> "str | None | _NotChecked":
     """④ `must_not_match`：标题里**不许出现**的东西（一组正则）。
 
     ⚑ 测的是 `§8.3` 的 #6 / #10 **已经写在文档里**的那条期望 ——「**不编造**」：
@@ -208,7 +287,7 @@ def judge_no_fabrication(nodes: list[dict[str, Any]], spec: list[str]) -> str | 
        后者是主观的，断言它等于把一种风格焊死。见 `corpus.json` 里这条种子的 `note`。
     """
     if not spec:
-        return None
+        return NOT_CHECKED
 
     for n in nodes:
         for pattern in spec:
@@ -246,6 +325,25 @@ def resolve_goal(goal: str, seed_id: str = "") -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _tally(why: "str | None | _NotChecked") -> tuple[bool, bool]:
+    """把判定函数的返回值摊成 `(这一层查了没, 这一层过了没)`。
+
+    ⚑ `NOT_CHECKED` 的「过了」是 `True` —— **没有断言就不该拦住谁**。
+      （否则骨架种子会因为"它本来就没写断言"而变红，那跟它的对错无关；
+        同一个道理见 `judge_no_fabrication` 的说明。）
+
+    ⚠️ 但「合格」**不是**「四层都验过」的意思 —— 报告里 `—` 和 `5/5` 必须分开显示，
+       否则这个词会被读成"验过了"（#13）。
+
+    ⚑ 还有一个后果是必须的：`NOT_CHECKED` 是个**对象**，为真 ——
+      所以 `if why_d:` 这种真值判断会把"没查"当成"失败了"✗。
+       下面一律用这里返回的布尔，**不再直接判 `why_*` 的真值**。
+    """
+    if why is NOT_CHECKED:
+        return False, True
+    return True, why is None
+
+
 def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
     """跑一条种子 `runs` 次，返回每一次的判定。"""
     limits = seed.get("limits", {})
@@ -254,6 +352,9 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
     passed_cover = 0
     passed_fab = 0
     passed_all = 0
+    # ⚑ 「这一层有没有接线」是**种子的性质**（由 spec 决定），五次必然一致 ——
+    #   所以循环里反复赋值、最后那次说了算，不是笔误。
+    checked: dict[str, bool] = {}
     failures: list[str] = []
     detail: list[dict[str, Any]] = []
 
@@ -269,19 +370,27 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
         why_c = judge_coverage(result.nodes, seed.get("coverage") or {})
         why_f = judge_no_fabrication(result.nodes, seed.get("must_not_match") or [])
 
-        if why_s is None:
-            passed_struct += 1
-        if why_d is None:
-            passed_dist += 1
-        if why_c is None:
-            passed_cover += 1
-        if why_f is None:
-            passed_fab += 1
+        s_checked, s_ok = _tally(why_s)
+        d_checked, d_ok = _tally(why_d)
+        c_checked, c_ok = _tally(why_c)
+        f_checked, f_ok = _tally(why_f)
+
+        checked = {
+            "struct": s_checked,
+            "dist": d_checked,
+            "cover": c_checked,
+            "fab": f_checked,
+        }
+
+        passed_struct += int(s_ok)
+        passed_dist += int(d_ok)
+        passed_cover += int(c_ok)
+        passed_fab += int(f_ok)
         # ⚑ "这条种子过了几次"必须是【所有已实现的层都过】的次数。
         #   ⚠️ 别用 min(结构, 分布, 覆盖) 代替 —— 那是**高估**：
         #   结构挂第 1 次、覆盖挂第 2 次时 min 说 4/5，
         #   而真正"全部通过"的只有 3 次。（这个坑第一版就踩了。）
-        if why_s is None and why_d is None and why_c is None and why_f is None:
+        if s_ok and d_ok and c_ok and f_ok:
             passed_all += 1
 
         # ⚑ 每一次的原始数字都留下 —— **通过的也要**。
@@ -300,16 +409,22 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
 
         # ⚑ 失败的那几次要留下**是怎么翻车的** —— 只报"红了"没用（#13 的口味）。
         step = f"第 {k + 1} 次"
-        if why_s:
+        if not s_ok:
             step += f" · 结构：{why_s}"
-        if why_d:
+        if not d_ok:
             step += f" · 分布：{why_d}"
-        if why_c:
+        if not c_ok:
             step += f" · 覆盖：{why_c}"
-        if why_f:
+        if not f_ok:
             step += f" · 编造：{why_f}"
-        if why_s or why_d or why_c or why_f:
-            titles = "、".join(n["title"] for n in result.nodes[:12])
+        if not (s_ok and d_ok and c_ok and f_ok):
+            # ⚠️ 只印前 `TITLE_PREVIEW` 个标题，**但别静默截断** ——
+            #   原来截掉的那部分是**不说的**，而 seed-05 第 5 次的真凶
+            #   恰好落在被截掉的 7 个里（19 个节点只印了 12 个）→ 查不到 (#13)。
+            titles = "、".join(n["title"] for n in result.nodes[:TITLE_PREVIEW])
+            hidden = len(result.nodes) - TITLE_PREVIEW
+            if hidden > 0:
+                titles += f"…（另有 {hidden} 个没印出来）"
             failures.append(f"{step}\n     它当时拆出的是：{titles}")
 
     return {
@@ -320,6 +435,8 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
         "cover": passed_cover,
         "fab": passed_fab,
         "passed": passed_all,  # ⚑ 判定用的是这个 —— 见上面那段说明
+        # ⚑ 哪几层**真查了** —— 报告拿它把"没接线"印成 `—` 而不是 `5/5`
+        "checked": checked,
         "failures": failures,
         "detail": detail,
         # 方向的**标签**（五个跑次共用一份），报告里要拿它和每次的命中标志配对
@@ -328,6 +445,19 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
 
 
 # ── 报告 ─────────────────────────────────────────────────────
+
+
+def _cell(checked: bool, passed: int, runs: int) -> str:
+    """一层的一格。**没查过的印 `—` —— 不是 `5/5`，也不是 `0/5`。**
+
+    ⚑ 两个错都得避，而且它们错的方向相反：
+      · 印 `5/5` → 读成「过了」（这就是改这个函数的起因）
+      · 印 `0/5` → 读成「全挂」，而实情是「没这一项」
+
+    ⚑ `checked` 从判定函数自己来（`NOT_CHECKED`），不是报告这边另判一次 ——
+      两份判断必然漂移，见 `_NotChecked` 的说明。
+    """
+    return f"{passed}/{runs}" if checked else "—"
 
 
 def render(
@@ -340,6 +470,9 @@ def render(
     print("   结构 / 分布 / 覆盖 / 编造 四层。")
     print("   所以这里的「通过」意思是「结构、归属、关键词都对，而且没编造」，")
     print("   **不包括**「拆得好不好」。")
+    # ⚑ 只在真有种子缺断言时才印这句 —— 一句永远都在的图例会变成样板话，然后被无视。
+    if any(not ok for r in results for ok in r["checked"].values()):
+        print("   ⚠️ `—` 表示这条种子**没写**那一层的断言 —— 不是通过，也不是失败。")
     print()
 
     # ⚠️ 不做等宽对齐：中文字符在终端里占两个格子，`:<10` 补出来的列对不齐。
@@ -350,10 +483,14 @@ def render(
     for r in results:
         verdict, bad = _verdict(r, baseline, runs_per_seed)
         regressed = regressed or bad
+        c = r["checked"]
         print(f"{r['id']}  {TIER_LABEL.get(r['tier'], r['tier'])}")
         print(
-            f"    结构 {r['struct']}/{runs_per_seed} · 分布 {r['dist']}/{runs_per_seed}"
-            f" · 覆盖 {r['cover']}/{runs_per_seed} · 编造 {r['fab']}/{runs_per_seed} · {verdict}"
+            f"    结构 {_cell(c['struct'], r['struct'], runs_per_seed)}"
+            f" · 分布 {_cell(c['dist'], r['dist'], runs_per_seed)}"
+            f" · 覆盖 {_cell(c['cover'], r['cover'], runs_per_seed)}"
+            f" · 编造 {_cell(c['fab'], r['fab'], runs_per_seed)}"
+            f" · {verdict}"
         )
 
     # ── 每条的明细（**通过的那几次也在内**）──────────────────────

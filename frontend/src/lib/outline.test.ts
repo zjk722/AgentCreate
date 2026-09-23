@@ -6,13 +6,15 @@
  *   这类测试的性价比最高：写的时候便宜，跑的时候便宜，坏了的时候
  *   直接指到出问题的那一行。
  *
- * 测试分三组：
+ * 测试分组：
  *   ① 正常路径 —— 结构对不对
  *   ② 坏数据   —— 4 种坏法各自被抓住了吗
  *   ③ 视图模型 —— displayState 的优先级和那个护栏
+ *   ④ §7.2 ① 组 —— 标题与兄弟重名（前端也算得出的那几条）
+ *   ⑤ 真实 mock 数据上跑一遍 —— 数据集自己必须是干净的
  */
 import { describe, expect, it } from 'vitest'
-import { buildTree, combineStatus, displayState, hasBlockingIssue, rollupStatuses } from './outline'
+import { TITLE_MAX, buildTree, combineStatus, displayState, hasBlockingIssue, rollupStatuses } from './outline'
 import { node } from '../mocks/_helper'
 import { datasets } from '../mocks'
 import type { OutlineNode } from '../types/outline'
@@ -568,7 +570,93 @@ describe('displayState', () => {
   })
 })
 
-/* ── ④ 真实 mock 数据上跑一遍 ──────────────────────────────── */
+/* ── ④ §7.2 ① 组：标题与兄弟重名（前端也算得出的那几条）────── */
+
+describe('标题校验（§7.2 ①）', () => {
+  it('空标题是 🔴 error —— 用户看到一格空白，那是真坏', () => {
+    const r = buildTree([node('r', null, 0, '根'), node('a', 'r', 0, '   ')])
+    expect(r.issues.map((i) => i.code)).toEqual(['E_EMPTY_TITLE'])
+    expect(r.issues[0].severity).toBe('error')
+    expect(r.issues[0].node_id).toBe('a')
+  })
+
+  it(`标题 ${TITLE_MAX} 字正好合规，${TITLE_MAX + 1} 字才报`, () => {
+    // ⚑ 边界必须钉死 —— 差一个字，"每次都撞"和"完全没事"就换了个位置。
+    //   而且这个常数要和 Python 的 `TITLE_MAX` 一致（见 lib/outline.ts 的说明）。
+    const ok = buildTree([node('r', null, 0, '根'), node('a', 'r', 0, '一'.repeat(TITLE_MAX))])
+    expect(ok.issues).toEqual([])
+
+    const bad = buildTree([
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '一'.repeat(TITLE_MAX + 1)),
+    ])
+    expect(bad.issues.map((i) => i.code)).toEqual(['W_TITLE_TOO_LONG'])
+    // ⚑ **是 warning 不是 error**（2026-09-22 从 🔴 降的）—— 内容完整、
+    //   只是宽了一点，不该拦住整张图开工。
+    //   ⚠️ 这一句防的是"有人把它改回 error 而没有任何东西变红"。
+    expect(bad.issues[0].severity).toBe('warning')
+  })
+
+  it('超长的 message 要给出字数和上限 —— 只说"超长"没法改', () => {
+    const r = buildTree([node('r', null, 0, '根'), node('a', 'r', 0, '一'.repeat(14))])
+    expect(r.issues[0].message).toContain('14 字')
+    expect(r.issues[0].message).toContain(String(TITLE_MAX))
+  })
+
+  it('⚑ 根节点也一样查 —— 它没有豁免', () => {
+    // 这条有来历：`ml-knowledge` 的根标题就是 13 字（它抄了 §8.3 种子 #1 的目标原文）。
+    // 根节点不豁免是有意的 —— 节点盒子宽度对根和叶子一视同仁。
+    const r = buildTree([node('r', null, 0, '一'.repeat(TITLE_MAX + 1))])
+    expect(r.issues.map((i) => i.code)).toEqual(['W_TITLE_TOO_LONG'])
+  })
+})
+
+describe('兄弟重名（§7.2 ①）', () => {
+  it('同一父亲下两个同名 → W_DUPLICATE_SIBLING，且 node_id 是 null', () => {
+    const r = buildTree([
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '准备'),
+      node('b', 'r', 1, '准备'),
+    ])
+    expect(r.issues.map((i) => i.code)).toEqual(['W_DUPLICATE_SIBLING'])
+    expect(r.issues[0].severity).toBe('warning')
+    // ⚑ 一对重名兄弟**没有单一归属**，挂给谁都是偏心 —— 所以是 null
+    expect(r.issues[0].node_id).toBeNull()
+    expect(r.issues[0].message).toContain('「准备」')
+    expect(r.issues[0].message).toContain('0、1')
+  })
+
+  it('跨分支同名是合法的', () => {
+    // §7.2 说的是【兄弟】重复 —— 两个分支下各有一个「准备」，很正常
+    const r = buildTree([
+      node('r', null, 0, '根'),
+      node('a', 'r', 0, '甲'),
+      node('a1', 'a', 0, '准备'),
+      node('b', 'r', 1, '乙'),
+      node('b1', 'b', 0, '准备'),
+    ])
+    expect(r.issues).toEqual([])
+  })
+
+  it('三个同名只报一条，不是三条', () => {
+    const r = buildTree([
+      node('r', null, 0, '根'),
+      node('n0', 'r', 0, '重名'),
+      node('n1', 'r', 1, '重名'),
+      node('n2', 'r', 2, '重名'),
+    ])
+    expect(r.issues.map((i) => i.code)).toEqual(['W_DUPLICATE_SIBLING'])
+    expect(r.issues[0].message).toContain('3 个')
+  })
+
+  it('空标题不参与重名 —— 它已经被 E_EMPTY_TITLE 报过了', () => {
+    // ⚑ 再报一次"同名"只会让问题条更吵（§7.3 那条"报警疲劳"的同一个道理）
+    const r = buildTree([node('r', null, 0, '根'), node('a', 'r', 0, ''), node('b', 'r', 1, ' ')])
+    expect(r.issues.map((i) => i.code)).toEqual(['E_EMPTY_TITLE', 'E_EMPTY_TITLE'])
+  })
+})
+
+/* ── ⑤ 真实 mock 数据上跑一遍 ──────────────────────────────── */
 
 describe('mock 数据集自身必须是干净的', () => {
   // 前 3 份来自 §8.3，是"模型可能产出的合理输出"，结构上必须无错。
@@ -591,7 +679,7 @@ describe('mock 数据集自身必须是干净的', () => {
     expect(mood.outline).toHaveLength(1)
   })
 
-  it('坏数据样本确实触发了【全部 6 类】问题（否则它就是份没用的样本）', () => {
+  it('坏数据样本确实触发了【全部 9 类】问题（否则它就是份没用的样本）', () => {
     const corrupt = datasets.find((d) => d.key === 'corrupt-sample')!
     const codes = new Set(buildTree(corrupt.outline).issues.map((i) => i.code))
     expect(codes).toEqual(
@@ -604,14 +692,19 @@ describe('mock 数据集自身必须是干净的', () => {
         // §7.2 第 ③ 组：依赖图
         'E_DANGLING_DEP',
         'E_CYCLE_DEP',
+        // §7.2 第 ① 组：标题（2026-09-22 加的 —— 前端也算得出的那几条）
+        'E_EMPTY_TITLE',
+        'W_TITLE_TOO_LONG',
+        'W_DUPLICATE_SIBLING',
       ]),
     )
   })
 
   it('⚑ 样本文件头部那份【计数】说明也是准的（不然它会悄悄过时）', () => {
     // corrupt-sample.ts 顶上写着详细清单（1 重复 + 1 孤儿 + 2 环 + 1 order
-    // + 1 悬空 + 2 依赖环）。那份说明是给人读的，没有东西守着它就会过时 ——
-    // 而这个项目的立场是"文档与代码冲突时以文档为准"，说明写错了比不写还糟。
+    // + 1 悬空 + 2 依赖环 + 1 空标题 + 1 超长 + 1 重名兄弟）。那份说明是给人读的，
+    // 没有东西守着它就会过时 —— 而这个项目的立场是"文档与代码冲突时以文档为准"，
+    // 说明写错了比不写还糟。
     const corrupt = datasets.find((d) => d.key === 'corrupt-sample')!
     const counts = buildTree(corrupt.outline).issues.reduce<Record<string, number>>((acc, i) => {
       acc[i.code] = (acc[i.code] ?? 0) + 1
@@ -625,6 +718,10 @@ describe('mock 数据集自身必须是干净的', () => {
       W_ORDER_INVALID: 1,
       E_DANGLING_DEP: 1,
       E_CYCLE_DEP: 2,
+      // ① 组（每个坑各占一个节点；⑨ 是一对，但只报一条）
+      E_EMPTY_TITLE: 1,
+      W_TITLE_TOO_LONG: 1,
+      W_DUPLICATE_SIBLING: 1,
     })
   })
 })
