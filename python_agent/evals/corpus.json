@@ -109,7 +109,7 @@
     "id": "seed-05",
     "tier": "green",
     "goal": "用导图讲清楚 HTTP 协议",
-    "limits": { "max_depth": 3, "max_children": 6 },
+    "limits": { "max_depth": 3, "max_children": 9 },
     "structure": { "allowed_warnings": [] },
     "distribution": null,
     "coverage": null,

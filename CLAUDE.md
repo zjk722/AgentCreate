@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+
+## 用户身份
+agent开发初学者,在开发项目时,需要你用通俗的语言,为用户讲解开发思路及相关技术的解释,回答问题不要绕弯子,要直白详细的回答,不要用简略隐晦或过于专业但是没有任何讲解来回答
+
 ---
 
 ## 这个项目是什么
@@ -23,24 +27,20 @@ React 前端   ── /api/v1/** (JWT) ──→  Java Host 层  ── 内部 H
 
 ---
 
-## ⚠️ 当前真实状态（先读这段，再读文档）
+## ⚠️ 先读：文档与代码的落差（判据，不是进度）
 
-**`DEV_DOC.md` 描述的是一张完整的蓝图，而仓库里只实现了其中一部分。** 两者别搞混。
+**`DEV_DOC.md` 描述的是一张完整的蓝图，而仓库里只实现了其中一部分。** 两者别搞混 ——
+蓝图说"最终长什么样"，代码说"现在到哪儿了"。**进度一律以代码和 `CHANGELOG.md` 为准。**
 
-| 层 | 状态 |
-|---|---|
-| `python_agent/` | **A0 已完成**：目标 → DeepSeek → 栈组装成树 → §7.2 ① 的 7 条校验 → `depends_on` 解析 |
-| `python_agent/evals/` | **A1 进行中**：`corpus.json` 只有 **3 条**种子（计划 12 条），无 `judges.py`，无 `baseline.json` |
-| `frontend/` | **提前做出来的 demo**（本属 A7），数据全来自 `src/mocks/`。布局算法、§7.2 ②③ 组校验、状态机、闸门都是真的 |
-| `java_backend/` | ❌ **不存在**。`docker-compose.yml` 也不存在 |
-
-**因此仓库里找不到这些**（不是遗漏，是排期）：`app/api/v1/execute_task.py`、`revise.py`、
-`llm/edit_tools.py`、`executor/`、`rag/`、`mcp/`、`frontend/src/api/`、`frontend/src/hooks/`。
+⚠️ 本段**故意不写进度快照**：2026-09-23 删掉了一张"A0 已完成""corpus 只有 3 条"那类表格。
+原因是它顶着"先读这段"的标题，却每个批次都变一次 —— **让最不可靠的内容享受最高的信任优先级，
+是这份文件唯一真正的结构错误。**
 
 ### ⚠️ `ARCHITECTURE.md` 已经过时
 
-它在开头自称"导航层，不是权威"，而它现在**比代码更旧**：目录树里画着 `java_backend/`、
-`docker-compose.yml`、`frontend/src/api/client.ts`（全都不存在），`evals/` 的位置也画错了。
+它在开头自称"导航层，不是权威"，而它**比代码更旧**：目录树里画着 `java_backend/`、
+`docker-compose.yml`、`frontend/src/api/client.ts`，`evals/` 的位置也画错了 ——
+**2026-09-23 复核时，前三个全都不存在。**
 **冲突时以 `DEV_DOC.md` 为准**（它自己开头就这么说的）—— 但要知道它的现状描述可能也是旧的，
 **以仓库里的代码为准**。
 
@@ -68,27 +68,16 @@ make web                           # 前端 Vite，端口 5173（首次先 cd fr
 `make serve` 和 `make web` 是**两个终端各跑一条**，故意不合成一条（日志混在一起就没法排查）。
 **更不要改成后台起一个** —— `&` / `start` 在 cmd 和 sh 里写法不同。
 
-### 单条测试
-
-```bash
-cd python_agent && uv run pytest tests/test_outline.py            # 单个文件
-cd python_agent && uv run pytest tests/test_outline.py::test_函数名 # 单个用例
-cd python_agent && uv run pytest -k "level_skip"                  # 按名字筛
-
-cd frontend && npx vitest run src/lib/layout.test.ts   # 单个文件
-cd frontend && npx vitest run -t "某个用例名"           # 按名字筛
-```
-
 ### 前端
 
 ```bash
 cd frontend
 npx tsc -b          # ⚑ 类型检查必须是这个：根 tsconfig 只有 references、files 为空，
                     #   所以 `tsc --noEmit` 在这里【检查 0 个文件】却是成功的（假绿灯）
-npm test            # = vitest run（全部 335 个）
-npm run lint        # oxlint
-npm run build       # tsc -b && vite build
 ```
+
+单条测试用 pytest / vitest 的标准筛法（`-k` / `-t`），单测 / lint / build 用 `package.json` 里
+现成的 script —— 这几样**没有本项目特有的东西**，不在这里抄第二份。
 
 环境变量放 `python_agent/.env`（`DEEPSEEK_API_KEY`，可选 `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL`）。
 `.env` 由 `app/llm/client.py` 里的 `load_dotenv()` 加载 —— **故意挂在"用 key 的地方"而不是某个入口**，
@@ -102,7 +91,7 @@ npm run build       # tsc -b && vite build
 DEV_DOC.md         ⚑ 权威。带编号的章节 + ADR，唯一的真相源
 ARCHITECTURE.md    导航层：全景/数据流/进度。⚠️ 现状部分已过时（见上）
 INTEGRATION.md     前端 ↔ Java 的接口契约：前端每处交互对应哪个接口
-CHANGELOG.md       每次推送的批次记录（含每个决定的【理由】）—— 想知道"为什么这样"先翻它
+CHANGELOG.md       每次改动的批次记录（含每个决定的【理由】）—— 想知道"为什么这样"先翻它
 shared/README.md   tools.json 里 DEV_DOC 没写、而这份文件自己产生的决定
 python_agent/evals/README.md   corpus.json 每格什么意思、为什么这么定
 ```
@@ -116,6 +105,26 @@ python_agent/evals/README.md   corpus.json 每格什么意思、为什么这么�
 1. 这个改动碰了下面「不可违反的约束」里的哪条吗？
 2. 它属于哪一层？（放错层比写错代码更难改）
 3. §13 的「Vibe Coding 边界」说这部分该谁写？
+
+---
+
+## 提交与推送（git）
+
+完整流程在 `.claude/skills/git/SKILL.md`：**查敏感信息 → 确认意图（含要不要开分支）
+→ 验网络 → 写 `CHANGELOG.md` → 执行**。
+
+⚠️ 那个 skill **不入库**（`.gitignore:50` 把整个 `.claude/skills/` 忽略了），换台机器就没有。
+所以下面这两条**约定本身**在这里也写一份：**skill 只是执行约定的管子，管子可以丢，约定不能丢。**
+
+**① 提交和推送都要写 `CHANGELOG.md`**（2026-09-23 立）。
+在那之前是"推送时一次性补记"，所以历史里 CHANGELOG 的提交总是单独一笔。
+文件按推送批次组织、**新的在末尾**；而提交时还没有推送号，于是：
+提交时追加到末尾的 `# 待推送（未分配推送号）` 段 → 推送时整段提升为 `# 推送 N`，
+补齐**时间 / commit 区间 / 概览表一行 / 累计行 / 顶部「记录范围」**（漏一处就对不上）。
+
+**② 改动和日志分开提。** 理由在 `CHANGELOG.md` 顶部（"设计决策与代码分开提 …… 同理，
+文档与功能也分开"）。所以默认两个提交：先是改动本身，紧跟一个 `docs:` 前缀、只含
+`CHANGELOG.md` 的提交。这次改动本身若是纯文档，合成一个即可。
 
 ---
 
@@ -214,7 +223,7 @@ python_agent/evals/README.md   corpus.json 每格什么意思、为什么这么�
 
 ---
 
-## 这台机器上的环境事实
+## 这台机器上的环境事实（核对于 2026-09-23）
 
 | 事实 | 影响 |
 |---|---|
@@ -226,7 +235,7 @@ python_agent/evals/README.md   corpus.json 每格什么意思、为什么这么�
 
 ---
 
-## 前端要点
+## 前端要点（核对于 2026-09-23）
 
 `frontend/` 的数据**全来自 `src/mocks/`**（seed 数据 + 真模型跑出来的两份方案 + 一份故意坏掉的数据样本）。
 `vite.config.ts` 里的 `/v1` 与 `/health` 代理是**开发脚手架，只存在于 `test-frontend` 分支** ——
