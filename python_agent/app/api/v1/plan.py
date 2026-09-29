@@ -29,7 +29,7 @@ router = APIRouter(prefix="/v1", tags=["plan"])
 
 class PlanRequest(BaseModel):
     goal: str = Field(min_length=1, description="用户的自然语言目标")
-    max_depth: int = Field(default=3, ge=1, description="深度上限（W_DEPTH_EXCEEDED 用它判）")
+    max_depth: int = Field(default=5, ge=1, description="深度上限（W_DEPTH_EXCEEDED 用它判）")
     max_children: int = Field(default=9, ge=1, description="扇出上限（W_FANOUT_EXCEEDED 用它判）")
 
 

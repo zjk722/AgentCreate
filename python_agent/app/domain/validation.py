@@ -21,8 +21,16 @@ from typing import Any
 
 from app.planner.outline import level_breaks, level_parents
 
-# §7.2 ① 的 `W_TITLE_TOO_LONG`：标题 > 12 字 → **超过**才算错，12 字正好合规。
-TITLE_MAX = 12
+# §7.2 ① 的 `W_TITLE_TOO_LONG`：标题 > 20 字 → **超过**才算错，20 字正好合规。
+#
+# ⚑ 2026-09-29 从 12 提到 20。起因：**根标题照抄目标原文是很自然的行为，
+#   而目标常常超过 12 字** —— `ml-knowledge` 那份 mock 的根就是 13 字的
+#   「整理一下机器学习的知识体系」（那是 §8.3 种子 #1 的目标原文）。
+#   ⇒ 12 字这个数在"根节点"上几乎必然触发，而它拦的是一件正常的事。
+#
+# ⚠️ 前端节点盒子宽度是**按这个数算出来的**（`frontend/src/lib/layout.ts` 的 `nodeWidth`）——
+#    改这个数**必须同时改那个**，否则标题在图上会被省略号截断，而没有任何东西提示（#13）。
+TITLE_MAX = 20
 
 # 层级基准：根是 level 1（用户 2026-09-15 定的）。
 # ⚑ §7.2 ① 的 `E_LEVEL_SKIP` 判定需要这个基准 —— 它落在这里。
@@ -85,13 +93,13 @@ def _check_titles(level_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         名字不改就是**报的话会撒谎** —— 同 §7.2 里 `E_DEP_ON_CONTAINER` /
         `W_CONTAINER_DEPS_UNREAD` 那条"首词不同"的规矩）。
 
-      ⚠️ 宽度约束本身**没有取消**：12 字上限还在，前端 168px 的节点宽度也是按它算的
+      ⚠️ 宽度约束本身**没有取消**：20 字上限还在，前端 320px 的节点宽度也是按它算的
         （`frontend/src/lib/layout.ts`）。用户照样在问题条上看得见这条，只是不再被拦住 ——
         他可以先开着工，回头再改那个标题。
 
       ⚠️ 降级**不改评测的严格度**：corpus 里 12 颗种子的 `allowed_warnings` 全是 `[]`，
         而 `evals/runner.py` 的 `judge_structure` 判红的条件是「有 error」**或**
-        「有 warning 不在白名单里」。所以 §8.3 seed #11 的「标题 ≤ 12 字」照样红 ——
+        「有 warning 不在白名单里」。所以 §8.3 seed #11 的「标题 ≤ 20 字」照样红 ——
         变的只是**用户会不会被拦住**。
     """
     issues = []

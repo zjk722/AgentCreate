@@ -172,8 +172,8 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="目标 → 任务图骨架（§5.1 的 ① 规划）")
     parser.add_argument("--goal", required=True, help="用户的自然语言目标")
-    parser.add_argument("--max-depth", type=int, default=3, help="深度上限（默认 3，§3.4）")
-    parser.add_argument("--max-children", type=int, default=6, help="扇出上限（默认 6，§3.4）")
+    parser.add_argument("--max-depth", type=int, default=5, help="深度上限（默认 5，§3.4）")
+    parser.add_argument("--max-children", type=int, default=9, help="扇出上限（默认 9，§3.4）")
     parser.add_argument(
         "--dry-run",
         action="store_true",

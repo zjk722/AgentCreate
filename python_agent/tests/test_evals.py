@@ -133,7 +133,7 @@ def test_结构失败要说清是哪个节点():
       **两个分支各自拼字符串，所以两条都得钉** —— 只钉一条的话，
       另一条的 message 被丢掉时不会有东西变红。
     """
-    msg = "第 12 个节点（下标 11）「HTTP/1.1到HTTP/3」：标题 15 字，超过 12 字上限"
+    msg = "第 12 个节点（下标 11）「HTTP/1.1到HTTP/3」：标题 34 字，超过 20 字上限"
 
     def issue(severity: str, code: str) -> dict:
         return {"severity": severity, "node_id": None, "code": code, "message": msg}

@@ -222,14 +222,16 @@ export function buildTree(outline: OutlineNode[]): BuildResult {
 /* ── §7.2 ① 组里前端也算得出的那几条 ─────────────────────── */
 
 /**
- * 标题长度上限（§7.2 ① 的 `W_TITLE_TOO_LONG`）：**超过** 12 才算错，12 字正好合规。
+ * 标题长度上限（§7.2 ① 的 `W_TITLE_TOO_LONG`）：**超过** 20 才算错，20 字正好合规。
  *
  * ⚠️ 这是**第二份实现** —— 第一份在 Python 的 `app/domain/validation.py`（`TITLE_MAX`）。
- *    两边必须都是 12，改一个就要改另一个。**唯一真相源是 `DEV_DOC` §7.2 ① 那张表**，
+ *    两边必须都是 20，改一个就要改另一个。**唯一真相源是 `DEV_DOC` §7.2 ① 那张表**，
  *    这两个常数都只是它的抄本。
  *    （性质和 `containerIds()` 那份"五处必须一致"的清单一样 —— 只是这次只有两处。）
+ *
+ * ⚑ 2026-09-29 从 12 提到 20 —— 同时**必须**改 `layout.ts` 的 `nodeWidth`，理由写在那边。
  */
-export const TITLE_MAX = 12
+export const TITLE_MAX = 20
 
 /**
  * 空标题 / 标题超长（§7.2 ① 的头两条）。

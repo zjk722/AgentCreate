@@ -598,8 +598,12 @@ describe('标题校验（§7.2 ①）', () => {
   })
 
   it('超长的 message 要给出字数和上限 —— 只说"超长"没法改', () => {
-    const r = buildTree([node('r', null, 0, '根'), node('a', 'r', 0, '一'.repeat(14))])
-    expect(r.issues[0].message).toContain('14 字')
+    // ⚠️ 字数写成 `TITLE_MAX + 2` 而不是硬编码 —— 原来这里写死 14，
+    //    上限从 12 提到 20 之后 14 就合规了，于是 `issues[0]` 是 undefined ✗
+    //    **测试跟着常数走，常数才敢改。**
+    const n = TITLE_MAX + 2
+    const r = buildTree([node('r', null, 0, '根'), node('a', 'r', 0, '一'.repeat(n))])
+    expect(r.issues[0].message).toContain(`${n} 字`)
     expect(r.issues[0].message).toContain(String(TITLE_MAX))
   })
 

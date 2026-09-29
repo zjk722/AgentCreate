@@ -226,9 +226,12 @@ describe('layout · 默认参数', () => {
     expect(r.width).toBeGreaterThanOrEqual(maxX)
   })
 
-  it('节点盒子够大，能容下 12 字标题（§7.2 的 W_TITLE_TOO_LONG 上限）', () => {
-    // 12 个中文字按 14px 字号约 168px 宽，加上内边距 —— 默认宽度必须 ≥ 这个数
-    expect(DEFAULT_LAYOUT.nodeWidth).toBeGreaterThanOrEqual(168)
+  it('节点盒子够大，能容下 20 字标题（§7.2 的 W_TITLE_TOO_LONG 上限）', () => {
+    // 20 个中文字按 14px 字号约 280px 宽，再加状态图标与右侧角标的位置 —— 必须 ≥ 320。
+    // ⚑ 这条守的是**标题看得全**：节点里标题是 `truncate`（省略号截断，不是折行），
+    //   宽度不够时读不全**而没有任何东西提示**（#13）。
+    //   ⚠️ 所以上限和宽度是**绑在一起**的 —— 改 `TITLE_MAX` 就必须回来看这里。
+    expect(DEFAULT_LAYOUT.nodeWidth).toBeGreaterThanOrEqual(320)
   })
 })
 

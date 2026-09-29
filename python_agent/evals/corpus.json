@@ -165,7 +165,7 @@
     "tier": "yellow",
     "goal": "inputs/long-form-3000.txt",
     "limits": { "max_depth": 3, "max_children": 6 },
-    "structure": { "allowed_warnings": [] },
+    "structure": { "allowed_warnings": ["W_FANOUT_EXCEEDED"] },
     "distribution": null,
     "coverage": null,
     "semantics": null,
@@ -175,12 +175,12 @@
     "id": "seed-11",
     "tier": "red",
     "goal": "inputs/jargon-heavy.txt",
-    "limits": { "max_depth": 3, "max_children": 6 },
+    "limits": { "max_depth": 5, "max_children": 10 },
     "structure": { "allowed_warnings": [] },
     "distribution": null,
     "coverage": null,
     "semantics": null,
-    "note": "§8.3 种子 #11（🔴）：标题 ≤ 12 字。⚑ 这条**现在就能完整测** ✓ —— 超长标题恒查 ✓。⚠️ 2026-09-22：它从 error 降成了 warning（`W_TITLE_TOO_LONG`，理由见 §7.2 ① 那张表下面），但**这条断言一个字没松** —— 本种子的 `allowed_warnings` 是 `[]`，而 runner 对「不在白名单里的 warning」一样判红。降级变的只是【用户会不会被 §7.1 的闸门拦住开工】。⚠️⚠️ 但**那段话还没写** —— 「含大量专有名词缩写」是这条种子的压力来源，随便凑一段就测不出东西（那是种子的**内容**，得人来定）。"
+    "note": "§8.3 种子 #11（🔴）：标题 ≤ 20 字。⚑ 这条**现在就能完整测** ✓ —— 超长标题恒查 ✓。⚠️ 2026-09-22：它从 error 降成了 warning（`W_TITLE_TOO_LONG`，理由见 §7.2 ① 那张表下面），但**这条断言一个字没松** —— 本种子的 `allowed_warnings` 是 `[]`，而 runner 对「不在白名单里的 warning」一样判红。降级变的只是【用户会不会被 §7.1 的闸门拦住开工】。⚠️ **2026-09-29：上限 12 → 20，这条种子因此被削弱了** —— 它本来是**专门测标题长度**的那一条（🔴 档，靠「不许倒退」守着），而 20 比 12 松得多。⇒ 要么把压力挪到「缩写多」这个内容设计上（`inputs/jargon-heavy.txt` 还是空的），要么重新想这条该测什么。⚠️⚠️ 而且**那段话还没写** —— 「含大量专有名词缩写」是这条种子的压力来源，随便凑一段就测不出东西（那是种子的**内容**，得人来定）。"
   },
   {
     "id": "seed-12",

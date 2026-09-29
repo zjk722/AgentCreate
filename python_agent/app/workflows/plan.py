@@ -74,8 +74,20 @@ class PlanResult:
     check_implemented: bool = False
 
 
-def plan_goal(goal: str, *, max_depth: int = 3, max_children: int = 9) -> PlanResult:
-    """目标 → 任务图骨架（§3.4 的 `/v1/plan` 干的就是这件事）。"""
+def plan_goal(goal: str, *, max_depth: int = 5, max_children: int = 9) -> PlanResult:
+    """目标 → 任务图骨架（§3.4 的 `/v1/plan` 干的就是这件事）。
+
+    ⚑ `max_depth` / `max_children` 是**两个上限**，不是"必须拆这么深/这么宽"。
+      它们**一处定义、两处用**：喂给 Prompt（`build_user_prompt`）+ 喂给校验
+      （`W_DEPTH_EXCEEDED` / `W_FANOUT_EXCEEDED`）。
+
+    ⚠️ 2026-09-29：平台默认值定为 **5 / 9**（原来是 3 / 6），§3.4 的示例同步。
+       ⚑ **这不影响评测** —— `corpus.json` 里 12 颗种子**各自带 `limits`**，
+         所以改这里只改「真实用户的请求不传这两个字段时，按什么来」✓
+       ⚠️ **但 `prompts.py` 的 `SYSTEM_PROMPT` 里还写死着「最好不超过六个」** ✗ ——
+          它和 user 消息里的 `max_children=9` 是**互相矛盾的指令**（同一个请求两个数）。
+          那处在 §13「用户自己写」的清单里，所以这里只标注、不动它。
+    """
     tools = load_tools()
     messages = build_messages(goal, tools, max_depth, max_children)
     data, usage = call_json(messages)
