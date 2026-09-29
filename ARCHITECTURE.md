@@ -102,7 +102,7 @@
    Java: JWT 校验 → 创建 map(user_id, status='planning')
 
 ③ 规划                                              ⚑ Python
-   Java → Python:  POST /v1/plan { goal, tools, max_depth:3, max_children:6 }
+   Java → Python:  POST /v1/plan { goal, tools, max_depth:5, max_children:9 }
    Python: 调 LLM → 模型输出【扁平 level 列表】
            → 程序【栈组装】成 parent_id 结构
            → 生成 12-hex ID → 生成期校验 → 返回 nodes + issues + usage

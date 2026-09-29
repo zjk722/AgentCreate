@@ -54,26 +54,14 @@ function expectClean(outline: OutlineNode[], what = '', allow: IssueCode[] = [])
   expect(issues, `${what} 产生了坏数据：${JSON.stringify(issues, null, 2)}`).toEqual([])
 }
 
-/**
- * ⚑ 点名例外：`ml-knowledge` 的**根**标题有 13 字，超了 §7.2 ① 的 12 字上限。
- *
- * **这不是数据写错，是一条规则冲突** —— 那份 mock 是按 §8.3 种子 #1 造的，
- * 根标题直接抄了目标原文「整理一下机器学习的知识体系」，而**目标常常 > 12 字**。
- * 模型很自然地会拿目标原文当根标题 ⇒ 真跑一次大概也会报同一条。
- * （`evals/corpus.json` 里 `allowed_warnings` 是 `[]`，所以 seed-01 大概率也会因此红。）
- *
- * ⚠️ **处置待定，属 prompt / 产品的决定，不是代码的**：
- *    要么让 prompt 要求"根标题要概括、别照抄目标"，
- *    要么承认根节点不受 12 字限制。
- *    **定下来之前先把信号留在这里 —— 别静默消掉**：
- *    消掉之后你会以为它已经没问题了，而那正是 #13 的形状。
- *
- * ⚑ 只对 ml-knowledge 生效，**不是全局放宽** —— 否则以后别的数据集里
- *   多出一个超长标题，这里会毫无反应，而它本来就该红。
- */
-function knownOverlong(datasetKey: string): IssueCode[] {
-  return datasetKey === 'ml-knowledge' ? ['W_TITLE_TOO_LONG'] : []
-}
+// ⚑ 这里原来有一个 `knownOverlong()` 例外 —— 给 `ml-knowledge` 的**根**标题
+//   「整理一下机器学习的知识体系」（13 字）开的后门。
+//
+//   **2026-09-29 删掉了**：`TITLE_MAX` 从 12 提到 20 之后，那个标题**自己就合规了** ✓
+//   ⇒ 例外没有存在的理由了。
+//
+//   ⚠️ 而"留着它"是有代价的：例外会**掩盖真问题** —— 以后真有超长标题时它不开火，
+//   而你不会知道。这也是当初写它时特意限定"只对 ml-knowledge 生效"的原因。
 
 /** 某个父亲下的孩子标题，按 order 排好 —— 断言"顺序"最直观的形式。 */
 function childrenOf(outline: OutlineNode[], parentId: string | null): string[] {
@@ -354,9 +342,6 @@ describe('moveNode · 在所有 mock 数据集上穷举', () => {
             expectClean(r.outline, `把「${from.title}」挪到「${to.title}」的 ${pos} 位之后，`, [
               'E_DEP_ON_CONTAINER',
               'W_CONTAINER_DEPS_UNREAD',
-              // ⚑ ml-knowledge 的根标题本来就超长（理由见 knownOverlong）——
-              //   拖动**不会**让它变长或变短，所以它不是"拖出来的"
-              ...knownOverlong(d.key),
             ])
           }
         }
@@ -712,8 +697,7 @@ describe('deleteNode · 在所有 mock 数据集上穷举', () => {
           const r = deleteNode(d.outline, n.id, mode)
           if (!r.ok) continue
           ok++
-          // ⚑ 同上：根标题超长是 ml-knowledge 自带的，删节点不会改变它
-          expectClean(r.outline, `删「${n.title}」(${mode}) 之后，`, knownOverlong(d.key))
+          expectClean(r.outline, `删「${n.title}」(${mode}) 之后，`)
         }
       }
       expect(ok, '一次成功的删除都没有，这个穷举等于没跑').toBeGreaterThan(0)

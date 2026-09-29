@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>真跑测试 · 任务图骨架</title>
+    <!--
+      ⚠️ 这是【脚手架】，只存在于 `test-frontend` 分支上 —— 用完就删。
+
+      唯一目的：在页面上输一个目标，**亲眼看真模型拆出来的图**。
+
+      ⚑ 为什么用裸 HTML，而不是接进 React 应用：
+         React 那边要加 api/client.ts、改 App.tsx 的编排、处理 401 / 409 / 串行保存队列
+         —— 那些是 A6 的活（INTEGRATION.md §6 已经算过账："实打实的工作"）。
+         而这个页面的目的只是"看一眼"，所以它**故意不复用任何东西**，
+         也就**不会欠下任何债**：删掉它就是一个文件的事。
+
+      ⚑ 它连的是 Python 引擎（靠 Vite 代理 `/v1` → localhost:8000）。
+         目标架构里前端**只跟 Java 说话** —— 所以这个代理和这个页面都是临时的。
+
+      ⚑ 一个刻意的设计：**先 ping /health**。
+         不然"后端没起来"和"模型调用失败"在页面上长得一样，
+         而那两件事的修法完全相反（一个去 make serve，一个去看 key / 网络 / Prompt）。
+    -->
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0; padding: 20px 24px;
+        font: 14px/1.6 ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+        color: #0f172a; background: #f8fafc;
+      }
+      h1 { font-size: 15px; margin: 0 0 4px; }
+      .sub { color: #64748b; font-size: 12px; margin-bottom: 14px; }
+      .row { display: flex; gap: 8px; align-items: flex-start; }
+      textarea {
+        flex: 1; padding: 8px 10px; font: inherit; font-size: 13px; resize: vertical;
+        min-height: 60px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff;
+      }
+      button {
+        padding: 8px 16px; font: inherit; font-size: 13px; cursor: pointer;
+        border: 0; border-radius: 6px; background: #0f172a; color: #fff; white-space: nowrap;
+      }
+      button:disabled { opacity: .4; cursor: not-allowed; }
+      #health { font-size: 12px; margin: 10px 0 4px; }
+      .ok { color: #15803d; } .bad { color: #b91c1c; }
+      .card {
+        margin-top: 14px; padding: 12px 14px; background: #fff;
+        border: 1px solid #e2e8f0; border-radius: 8px;
+      }
+      .meta { font-size: 12px; color: #475569; }
+      .meta b { color: #0f172a; }
+      pre { margin: 8px 0 0; font-size: 12.5px; line-height: 1.5; white-space: pre; overflow-x: auto; }
+      .warn { margin-top: 10px; padding: 8px 10px; border-radius: 6px; font-size: 12.5px; }
+      .warn.red { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+      .warn.amber { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+      .warn.note { background: #f1f5f9; border: 1px solid #e2e8f0; color: #475569; }
+      code { font-family: ui-monospace, Consolas, monospace; }
+    </style>
+  </head>
+  <body>
+    <h1>真跑测试 · 目标 → 任务图骨架</h1>
+    <p class="sub">
+      ⚠️ 这是脚手架（<code>test-frontend</code> 分支）：它直连 Python 引擎，
+      拿回来的是<b>规划器的提议</b>，<b>未经 Policy 裁决</b> —— 缺工具的节点在这里仍显示 agent。
+    </p>
+
+    <div class="row">
+      <textarea id="goal">帮我规划一次关西七日游</textarea>
+      <button id="go">真跑一次</button>
+    </div>
+    <div id="health">正在检查后端…</div>
+    <div id="out"></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id)
+      const out = $('out')
+      const go = $('go')
+
+      // 同一个目录下的后端路径 —— Vite 代理会把它转到 localhost:8000
+      const API = '/v1/plan'
+
+      function esc(s) {
+        return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+      }
+
+      /** 扁平数组 → 缩进文本树（照 parent_id / order 走，和后端组装的规则一致）。 */
+      /** 容器 = 有孩子的那种节点（和后端 CLI / 前端 summarize 用同一个判据）。 */
+      function containerIds(nodes) {
+        return new Set(nodes.map((n) => n.parent_id).filter(Boolean))
+      }
+
+      function renderTree(nodes) {
+        const byId = new Map(nodes.map((n) => [n.id, n]))
+        const containers = containerIds(nodes)
+        const kids = new Map()
+        for (const n of nodes) {
+          const k = n.parent_id ?? '(root)'
+          if (!kids.has(k)) kids.set(k, [])
+          kids.get(k).push(n)
+        }
+        for (const list of kids.values()) list.sort((a, b) => a.order - b.order)
+
+        const lines = []
+        const walk = (key, prefix) => {
+          const list = kids.get(key) ?? []
+          list.forEach((n, i) => {
+            const last = i === list.length - 1
+            // 容器不是任务，不显示 assignee / 工具（和后端 CLI 的输出一致）
+            const who = containers.has(n.id)
+              ? '容器'
+              : `${n.assignee}${n.proposed_tool ? ' · ' + n.proposed_tool : ''}`
+
+            // ⚑ 依赖**必须显示** —— 「这个 agent 任务要不要等用户」就写在这里。
+            //   `assignee` 说的是"谁**执行**"，不是"要不要**问用户**" —— 那是两件事。
+            //
+            // ⚠️ **这里不能用 `n.depends_on ?? []`** —— 那会把两种情况显示成一样：
+            //   · **缺这个键** → 后端还在跑旧代码（依赖解析没上线）
+            //   · `[]`       → 模型明确说"我不依赖谁"
+            //   而**区分这两件事正是 `deps.py` 整个模块存在的理由** ✓
+            //   （它们显示成一样，就会像那次一样：**看不出是后端跑错代码了** ✗）
+            const deps = (n.depends_on ?? []).map((d) => byId.get(d)?.title ?? d)
+            const depTxt = !('depends_on' in n)
+              ? '  ← ⚠️ 没有 depends_on 字段'
+              : deps.length
+                ? `  ← 依赖: ${deps.join('、')}`
+                : ''
+
+            lines.push(`${prefix}${last ? '└─ ' : '├─ '}${n.title}  [${who}]${depTxt}`)
+            walk(n.id, prefix + (last ? '   ' : '│  '))
+          })
+        }
+        walk('(root)', '')
+        return lines.join('\n')
+      }
+
+      async function checkHealth() {
+        try {
+          const r = await fetch('/health')
+          if (!r.ok) throw new Error(r.status)
+          $('health').innerHTML = '<span class="ok">✓ 后端在（localhost:8000）</span>'
+        } catch {
+          $('health').innerHTML =
+            '<span class="bad">✗ 后端没起来</span> —— 先在另一个终端跑 <code>make serve</code>' +
+            '<br><span class="sub">（这一步就是为了把「后端没起」和「模型失败」分开，' +
+            '不然它们在这个页面上长得一模一样）</span>'
+        }
+      }
+
+      async function run() {
+        go.disabled = true
+        out.innerHTML = '<div class="card">正在跑…（一次真调用，约 5～20 秒）</div>'
+        const t0 = performance.now()
+        try {
+          const r = await fetch(API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ goal: $('goal').value }),
+          })
+          const secs = ((performance.now() - t0) / 1000).toFixed(1)
+
+          // ⚑ 先拿**文本**，不要直接 `r.json()` —— 这一步是踩过才加的：
+          //   代理没生效时（比如 Vite 用的是另一份配置），拿回来的是一整页 HTML，
+          //   而 `r.json()` 会抛 "Unexpected end of JSON input" ✗
+          //   —— 那句话**完全没说"请求根本没到后端"**，把人引向了错的方向。
+          const text = await r.text()
+          let body = null
+          try {
+            body = JSON.parse(text)
+          } catch {
+            /* 不是 JSON —— 下面按"不是 JSON"报，并说清可能的原因 */
+          }
+
+          if (!r.ok || body === null) {
+            // ⚑ 这两种必须分开说，因为修法完全不同：
+            //   · 后端回了 JSON 的 detail（502 / 500）→ 是模型或配置的问题
+            //   · 拿回来的是 HTML            → **请求没到后端**（代理 / 服务没起来）
+            const isHtml = /^\s*</.test(text)
+            const why = isHtml
+              ? '拿回来的是 <b>一页 HTML</b>，不是后端的 JSON —— ' +
+                '说明<b>请求根本没到后端</b>。查两件事：<br>' +
+                '&nbsp;&nbsp;· 上面那行后端状态是不是绿的<br>' +
+                '&nbsp;&nbsp;· Vite 代理还在不在（换过分支 / 改过 vite.config 的话，' +
+                'Vite 可能正带着另一份配置跑）→ <b>重启 vite</b> 最省事'
+              : `HTTP ${r.status}`
+            out.innerHTML =
+              `<div class="card"><div class="warn red">${why}（${secs} 秒）` +
+              `<pre>${esc(body?.detail ?? text.slice(0, 400))}</pre></div></div>`
+            return
+          }
+
+          const errors = body.issues.filter((i) => i.severity === 'error')
+          const warns = body.issues.filter((i) => i.severity === 'warning')
+          const u = body.usage ?? {}
+
+          let html = '<div class="card">'
+          html += `<div class="meta">节点数 <b>${body.nodes.length}</b> · ` +
+            `error <b>${errors.length}</b> · warning <b>${warns.length}</b> · ` +
+            `用量 <b>${u.input_tokens ?? '?'} in / ${u.output_tokens ?? '?'} out</b> · ` +
+            `后端耗时 <b>${u.elapsed_ms ?? '?'} ms</b> · 端到端 <b>${secs} 秒</b></div>`
+
+          // ⚑ 指纹：回答"这个结果是不是【新那版】Prompt 跑出来的"。
+          //
+          //   改完 prompts.py，uvicorn 的 --reload 会自己重载 ✓ ——
+          //   但**什么时候重载完、旧 worker 有没有退干净，从外面看不出来** ✗
+          //   表现就是"有时候结果对、有时候不对"，而页面上一切正常（#13）。
+          //
+          //   → 把指纹摆出来，打到旧 worker 的请求**立刻现形** ✓
+          //   对照物：`make prompt` 会打印【磁盘上】那一版的指纹，两边对着看。
+          html +=
+            `<div class="meta">Prompt 指纹 <b><code>${esc(body.prompt_fingerprint ?? '？')}</code></b>` +
+            ` <span class="sub">← 改了 prompts.py 之后它应该变；不变就是没生效</span></div>`
+
+          // ⚑ 没有这个字段 → 这不像"新后端"，更像**后端跑的是旧代码** ✗
+          //   （和上面 depends_on 那个启发式同一个道理：分不清"没做"和"没生效"，
+          //     人就会往错的方向查）
+          if (!body.prompt_fingerprint) {
+            html +=
+              '<div class="warn amber">⚠️ 响应里没有 <code>prompt_fingerprint</code> —— ' +
+              '这不像新后端，更像<b>后端跑的是旧代码</b> ✗<br>' +
+              '→ <b>重启后端</b>最省事（<code>netstat -ano | findstr ":8000"</code> 看看有几个在听）</div>'
+          }
+
+          for (const i of body.issues) {
+            html += `<div class="warn ${i.severity === 'error' ? 'red' : 'amber'}">` +
+              `${i.severity === 'error' ? '🔴' : '🟡'} <code>${esc(i.code)}</code> ${esc(i.message)}</div>`
+          }
+
+          // ⚑ 整体检查：**一个节点都没有** `depends_on` 字段。
+          //
+          //   那不像"模型没写"，而更像**后端跑的是旧代码** ✗
+          //   —— 真发生过两次：两个 uvicorn 抢同一个端口（Windows 允许这样 ✗），
+          //      请求**随机**落到旧的那个 ✓
+          //      → 表现是"有时候有依赖、有时候没有"，而**页面上看不出区别**（#13 的形状）
+          //
+          // ⚑ 2026-09-22 已经从两头堵上了：
+          //   · `make serve` → 端口被占就**报错退出**，不再叠加（`python_agent/devserve.py`）
+          //   · `make restart` → 只杀它自己起过的那个
+          //   · 且**去掉了 `--reload`** —— 它有时灵有时不灵，而且是双进程，
+          //     会让"杀掉重启"变得不可靠（netstat 报的 PID 可能是死的）
+          //   · 页面上那个 **Prompt 指纹** 就是给这件事留的探针：不一致 = 打到了旧进程
+          const missing = body.nodes.filter((n) => !('depends_on' in n)).length
+          if (body.nodes.length > 0 && missing === body.nodes.length) {
+            html +=
+              '<div class="warn amber">⚠️ <b>所有</b>节点都没有 <code>depends_on</code> 字段 —— ' +
+              '这不像"模型没写"，更像<b>后端跑的是旧代码</b> ✗<br>' +
+              '（uvicorn 的 <code>--reload</code> 改完代码后有时<b>不杀旧的 worker</b>，' +
+              '于是两个进程抢同一个端口 → 请求随机落到旧的那个）<br>' +
+              '→ <b>重启后端</b>最省事（顺带 <code>netstat -ano | findstr :8000</code> 看看有几个在听）</div>'
+          }
+
+          // ⚑ 依赖指向【容器】= 那个任务**永远等不到** ✓
+          //
+          //   容器的状态是"汇总"出来的，**存储里没人写它** —— 所以它永远不会变成 done ✓
+          //   而 §7.2 ③ 现有的两条校验（成环 / 悬空）**都抓不到这个** ✗
+          //   （它不是环：父→子是树的边；也不悬空：那个 id 确实存在）
+          //
+          //   → 所以这里把它**摆出来** —— 不然图上看不出任何异常（#13 的形状）
+          const containers = containerIds(body.nodes)
+          const badDeps = body.nodes.filter((n) =>
+            (n.depends_on ?? []).some((d) => containers.has(d)),
+          )
+          if (badDeps.length) {
+            html +=
+              `<div class="warn amber">⚠️ 有 <b>${badDeps.length}</b> 个任务的依赖指向了<b>容器</b>：` +
+              `${badDeps.map((n) => esc(n.title)).join('、')}<br>` +
+              '容器的状态是「汇总」出来的、没人写它 → 那条依赖<b>永远满足不了</b>，' +
+              '那些任务会<b>永远等着</b> —— 而图上看不出任何异常。<br>' +
+              '⚑ 已定案（2026-09-20）：校验里<b>禁掉</b>「依赖容器」—— ' +
+              '<code>E_DEP_ON_CONTAINER</code>，🔴。' +
+              '（正式规则在前端 <code>lib/outline.ts</code>；本页是脚手架、故意不复用任何东西，' +
+              '所以这里另写了一遍同样的判断）</div>'
+          }
+
+          // ⚑ 反方向的**那一条**：容器**自己**写了 depends_on → 没有任何代码读它 ✗
+          //
+          //   看调度循环就知道了：
+          //     simulation.ts:124  if (containers.has(n.id)) continue      ← 容器在这儿就被跳过了
+          //     simulation.ts:126  const depsOk = n.depends_on.every(...)  ← 压根轮不到容器
+          //   容器的状态是"汇总"出来的，它自己不执行、也没人看它的依赖。
+          //
+          //   → 模型写下的"整组要等 X"**从此不存在**，而图上什么异常都没有（#13）
+          const deadDeps = body.nodes.filter(
+            (n) => containers.has(n.id) && (n.depends_on ?? []).length > 0,
+          )
+          if (deadDeps.length) {
+            html +=
+              `<div class="warn amber">⚠️ 有 <b>${deadDeps.length}</b> 个<b>容器自己</b>写了依赖，` +
+              `但<b>没有任何代码读它</b>：${deadDeps.map((n) => esc(n.title)).join('、')}<br>` +
+              '容器不执行 → 它自己的 <code>depends_on</code> 是个<b>死字段</b>，' +
+              '那条约束<b>不会生效</b>（丢的是约束，不是任务 —— 所以不阻断）。<br>' +
+              '⚑ 已定案（2026-09-20）：<code>W_CONTAINER_DEPS_UNREAD</code>，🟡。' +
+              '修法：要表达"整组要等 X"，就让<b>组里每个任务都依赖 X</b>。</div>'
+          }
+
+          // ⚑ 校验没实现时**必须显示** —— 不然"0 个 issue"会被读成"校验通过"
+          if (!body.check_implemented) {
+            html += '<div class="warn amber">⚠️ 校验（§7.2 ① 的 7 条）**未实现** —— ' +
+              '上面没有 issue ≠ 没有问题，是还没查。</div>'
+          }
+
+          html += `<pre>${esc(renderTree(body.nodes))}</pre>`
+          html += '</div>'
+          out.innerHTML = html
+        } catch (e) {
+          out.innerHTML =
+            `<div class="card"><div class="warn red">请求发不出去：${esc(e.message)}` +
+            '<br>（先看上面那行后端状态）</div></div>'
+        } finally {
+          go.disabled = false
+        }
+      }
+
+      go.addEventListener('click', run)
+      checkHealth()
+    </script>
+  </body>
+</html>

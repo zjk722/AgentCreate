@@ -378,8 +378,8 @@ def run_seed(seed: dict[str, Any], runs: int) -> dict[str, Any]:
     for k in range(runs):
         result = plan_goal(
             resolve_goal(seed["goal"], seed["id"]),
-            max_depth=limits.get("max_depth", 3),
-            max_children=limits.get("max_children", 6),
+            max_depth=limits.get("max_depth", 5),
+            max_children=limits.get("max_children", 9),
         )
 
         why_s = judge_structure(result.nodes, result.issues, seed["structure"])

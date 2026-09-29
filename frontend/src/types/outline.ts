@@ -276,7 +276,7 @@ export type IssueCode =
    * ⚠️ `W_DEPTH_EXCEEDED` / `W_FANOUT_EXCEEDED` **也还没进来** ——
    *   它们要 `max_depth` / `max_children`，那是**每张图不同的请求参数**
    *   （`evals/corpus.json` 里就有 6 和 9 两种），而 `maps` 表（§4.1）和
-   *   `INTEGRATION.md` 里都没有它们。编个默认 3/6 会**撒谎**，所以宁可不查。
+   *   `INTEGRATION.md` 里都没有它们。**编个默认值就是在撒谎**，所以宁可不查。
    *   等 A6 把参数落库再补 —— 那之前，前端对这两条是"没查"，不是"没问题"。
    */
   /**
@@ -287,7 +287,7 @@ export type IssueCode =
    */
   | 'E_EMPTY_TITLE'
   /**
-   * 标题超长（> 12 字）。🟡 提示。
+   * 标题超长（> 20 字）。🟡 提示。
    *
    * ⚑ 2026-09-22 从 🔴 降成 🟡（完整理由见 `DEV_DOC` §7.2 ①）。
    *   一句话：它和 `W_DEPTH_EXCEEDED` / `W_FANOUT_EXCEEDED` 是**同一类东西**
