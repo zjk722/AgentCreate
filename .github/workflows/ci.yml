@@ -1,0 +1,137 @@
+# CI 门禁 —— §8.4 的「回归门禁」在 GitHub 上的执行者。
+#
+# ⚑ 它守的是【代码有没有被写坏】。四件事：类型检查 · lint · 单元测试 · 构建。
+#
+# ⚠️ 它【故意不跑】`make eval` —— 那条真调模型（花钱）而且结果有随机性
+#    （12 颗种子里红了的是模型的正常水平，不是坏消息，见 evals/runner.py 开头）。
+#    把有随机性的东西放进门禁，结果是**天天红 → 所有人学会无视它** = §7.3 的报警疲劳。
+#
+# ⚠️ 它【不会】做的事，别指望它：
+#    · 不改你的代码、不删你的提交、**不回滚**
+#    · **拦不住"这一次" push** —— CI 是【推完之后】才跑的，物理上管不了已发生的事。
+#      它只做一件事：**准确、准时地告诉你哪儿坏了。**
+#      （想让红叉拦住合并，要去仓库设置里开 Rulesets + 走 PR，那是另一件事。）
+
+name: CI
+
+# 什么时候跑。
+#
+# ⚑ push 只盯 main：现在的工作流是【直接推 main】（见 CHANGELOG），所以 main 必须有；
+#   而将来的 feature 分支由 pull_request 覆盖。
+#   两边都照顾到，又不会"推一个分支 + 再开 PR"白跑两遍。
+#
+# ⚑ workflow_dispatch = 网页上能手动点一下就跑（Actions 页面右上角）。
+#   加它是因为**第一次配好之后想验证**，而那时还没有东西可推。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# ⚑ 最小权限：CI 只需要【读】代码。
+#   给它写权限没有任何好处 —— 而万一哪天某个依赖被投毒，权限越小越安全。
+permissions:
+  contents: read
+
+# ⚑ 同一个分支连着推两次时，**取消上一次还没跑完的**。
+#   不取消的话你会同时收到两份报告，而先到的那份是【旧代码】的 —— 一个假信号。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── ① Python 引擎 ───────────────────────────────────────────
+  python:
+    name: Python 引擎（pytest）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # ⚑ 这一条和 pyproject.toml 里的 `python-preference = "only-system"` 是**一对**。
+      #
+      #   那行是在你这台 Windows 上为了绕开"uv 跑去 github 下载它自己管版的 Python"
+      #   才加的（代理没开时它会卡住）。副作用是：**uv 只用系统里已有的 Python**，
+      #   它自己一个都不装。
+      #
+      #   ⇒ 所以在 CI 这台干净机器上，得**先保证有一个 3.12 摆在 PATH 上**，
+      #     否则 uv 会报"找不到系统 Python"。
+      #     用 setup-python 而不是 setup-uv 的 python-version：后者装的是
+      #     **uv 自己管的** Python，正好被 only-system 排除掉。
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v7
+
+      # ⚑ `--locked` 不是装饰：如果 pyproject.toml 改了而 uv.lock 忘了跟着提交，
+      #   它【报错】而不是自己偷偷算一个新的。
+      #
+      #   这正好抓住一类**本机永远抓不到**的错：你本机跑得好好的（包已经装在本机了），
+      #   换台机器却装不起来 —— 这就是"在我电脑上是好的"（works on my machine）。
+      #   CI 这台干净空机器存在的首要价值，就是治它。
+      - name: 装依赖（严格按 uv.lock）
+        run: uv sync --locked
+        working-directory: python_agent
+
+      # ⚑ 等价于 `make test`（Makefile 里就是 `uv run pytest -q`）。
+      #   这里故意【不写成 make test】—— 一步一件事，红了 GitHub 会直接指出是哪一步。
+      #   本项目现有的 69 条测试**不联网、不需要 API key**，所以 CI 里不用配任何 secret。
+      - name: 测试
+        run: uv run pytest -q
+        working-directory: python_agent
+
+  # ── ② 前端 ─────────────────────────────────────────────────
+  frontend:
+    name: 前端（类型 / lint / 测试 / 构建）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # ⚑ 版本【跟着本机走】（本机实测 node v24.14.0）。
+      #   本地和 CI 用同一个大版本，才不会出现"本机过、CI 不过"这种最难查的情况。
+      #
+      #   cache: npm 会把 ~/.npm 缓存起来，第二次以后装依赖快很多。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # ⚑ `npm ci` 而不是 `npm install`：ci 严格按 lock 装，对不上就报错。
+      #   （和 Python 那边的 `--locked` 是同一个用意。）
+      #
+      #   ⚠️ 本机跑这条会 EPERM 失败 —— 那是 **Windows 特有的文件锁**：
+      #      IntelliJ IDEA 的 Tailwind 插件把 `tailwindcss-oxide.*.node`
+      #      这个原生二进制**加载在内存里**，于是这个文件删不掉、改不了。
+      #      **Linux 上没有 IDE，也就没有这个锁**，所以 CI 里它没问题。
+      #   ⚠️ 还有个副作用要记着：`npm ci` 是【先清空 node_modules】再装的 ——
+      #      它一失败，本机的 node_modules 就只剩个壳了。还原用 `npm install`
+      #      （它不清空，能绕过那个被占住的文件）。
+      - name: 装依赖（严格按 package-lock.json）
+        run: npm ci
+        working-directory: frontend
+
+      # ⚠️ 必须是 `tsc -b`，**不能**是 `tsc --noEmit`。
+      #   根 tsconfig 只有 references、files 为空 —— 于是 `tsc --noEmit`
+      #   在这个仓库里【检查 0 个文件】却返回成功（一个假绿灯）。
+      #   这个坑真踩过，记在 CLAUDE.md 的「前端」一节。
+      - name: 类型检查
+        run: npx tsc -b
+        working-directory: frontend
+
+      - name: Lint（oxlint）
+        run: npm run lint
+        working-directory: frontend
+
+      - name: 单元测试
+        run: npm test
+        working-directory: frontend
+
+      # ⚑ `npm run build` 内部又跑了一次 `tsc -b`（见 package.json 的 build）。
+      #   重复是**故意的**：上一步单独红了，GitHub 会写"类型检查失败"，
+      #   而不是笼统的"构建失败"。tsc -b 是增量的，第二次几乎不花时间。
+      - name: 构建（vite build）
+        run: npm run build
+        working-directory: frontend
