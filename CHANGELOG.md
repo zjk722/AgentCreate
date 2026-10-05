@@ -1,7 +1,7 @@
 # 变更日志
 
 > **仓库** https://github.com/zjk722/AgentCreate
-> **记录范围** 从仓库初始化到 2026-09-23 的全部推送
+> **记录范围** 从仓库初始化到 2026-10-05 的全部推送
 > **作者** zjk722
 
 **提交粒度的约定**：**设计决策** 与 **代码** 分开提 —— 这样 `git log` 能一眼看出
@@ -25,8 +25,9 @@
 | **10** | 09-16 19:35 | `60873f9..d1f6b29` | 2 | A0 验收（首次真调）+ A1 开场 |
 | **11** | 09-22 21:03 | `d1f6b29..de0da15` | 28 | A1 评测成形 + 状态机改向 + Prompt 六处 |
 | **12** | 09-23 19:33 | `de0da15..c13e7f1` | 3 | 标题超长降级 + ① 组补进前端 + CLAUDE.md 改写 |
+| **13** | 10-05 14:34 | `c13e7f1..d7a0fa6` | 13 | 测试页 + Prompt 与上限调整 + 分支合并收尾 |
 
-**累计**：59 个提交 · 93 个文件 · **+20444 / −24** · 测试：前端 **343** · Python 69
+**累计**：89 个提交 · 94 个文件 · **+21053 / −29** · 测试：前端 **343** · Python 69
 
 > 行内的提交数只统计**代码 / 文档改动**；本文件自身的提交不占行，但已计入累计。
 > 推送 1–6 都发生在 09-12，所以那几行只写了时间；7 起跨天了，带上日期。
@@ -1562,7 +1563,37 @@ A6 之后要和 `test.html` 一起撤。）
 
 ---
 
-# 待推送（未分配推送号）
+# 推送 13 · 10-05 14:34 · 测试页 + Prompt 与上限调整 + 分支合并收尾
+
+区间 `c13e7f1..d7a0fa6`，**30 个提交**（下面列非合并的 16 个，另有 14 个合并）。
+
+```
+d7a0fa6  chore: 忽略 AgentStudy.md；plan.py 补一个空行
+6142533  docs: CHANGELOG —— 推送 13 待补的三条（上限调整 / seed-10 输入 / 分支分叉与合并）
+139d20c  chore(frontend): 撤掉合并带进来的开发脚手架 —— main 上不该有它
+e6d89d8  feat(evals): seed-10 的输入文件 —— 一份需求文档（实测 3512 字符 / 10 个功能模块）
+9c526ed  feat(limits): 标题上限 12→20；深度/广度默认值 3/6→5/9
+daf49ba  docs: CHANGELOG —— 建立「待推送」段 + 这一批的条目
+8099d64  feat(prompts): 目标说不清时不许自己挑一件事；评测报告带上 Prompt 指纹
+1814e18  docs: CHANGELOG 推送 12 —— 提升「待推送」段 + 校准两处旧账
+807f36e  feat(test-frontend): 页面注释跟上 —— 抢端口的坑已经两头堵上了
+0de32b0  feat(test-frontend): 页面上显示 Prompt 指纹 —— 一眼看出跑的是哪一版
+b4ce0a4  feat(test-frontend): 页面上补出反方向那条 —— 容器自己的 depends_on 没人读
+83bdcef  fix(test-frontend): 容器依赖不是"待定的缺口"了 —— E_DEP_ON_CONTAINER 已定案
+a58939e  fix(test-frontend): 把"缺 depends_on 字段"和"没有依赖"分开显示
+ce2d133  feat(test-frontend): 页面显示依赖 —— 「这个 agent 任务要不要等用户」就写在这里
+c5dd8b1  fix(test-frontend): 拿到 HTML 时要报"请求没到后端"，而不是 "Unexpected end of JSON input"
+6f9e3e7  feat(test-frontend): 小型测试页 —— 在页面上亲眼看真模型拆出来的图
+```
+
+> ⚠️ **本次只推 `main`。** `test-frontend` 分支**已完全并入 main**
+> （`main..test-frontend` = 0 个提交），而且它从建立起就没推到过 `origin` ——
+> 按推送 12 立的惯例，**它继续留在本地**。
+>
+> 它带进来的开发脚手架（`frontend/test.html` + `vite.config.ts` 的两条代理）
+> 已由 `139d20c` 从 main 上撤掉 ✓ —— 核实过：main 的 `vite.config.ts` 里
+> `proxy|/health` 命中 **0 条**、也**没有** `test.html`。
+> ⚑ 在 `test-frontend` 那个提交上它们还在（分支指向旧提交），checkout 过去就能拿回来。
 
 ## feat(prompts): 目标说不清时不许自己挑一件事；评测报告带上 Prompt 指纹
 
@@ -1778,3 +1809,21 @@ Prompt 指纹 **`43c01211`**（改 `prompts.py` 之后确实变了）
 **验证**：`make test` → **69 passed** ✓ · `npx tsc -b` 干净 ✓ · `npm test` → **343 passed** ✓
 · `make prompt` 实测：合并后的正文自洽、1–17 行全顶格、**无冲突标记** ✓
 · `grep -c "proxy|/health" vite.config.ts` → **0** ✓
+
+## chore: 忽略 `AgentStudy.md`；`plan.py` 补一个空行
+
+| | |
+|---|---|
+| 文件 | 2 个 |
+| 规模 | +5 / −0 |
+
+**做了什么**
+
+- **`.gitignore` 加 `AgentStudy.md`** —— 和 `STUDY.md` 同一条理由：它不参与构建、
+  也不参与测试，是学给自己看的，别人 clone 下来用不到。
+  ⚑ 从注释看它是 `STUDY.md` 的**配套第二本**（那本讲语法，这本讲"代码为什么长这样"），
+  而且**可以一直往后追加** —— 想讲下一个模块就往后加一节。
+- **`plan.py` 在 `tools = load_tools()` 后补一个空行** —— 纯格式，无语义。
+
+⚠️ 后一条没有任何行为改变，提它只是不想让它一直挂在 `git status` 里碍眼
+（留着的话，下次看状态时会和真改动混在一起）。
