@@ -67,14 +67,19 @@ def validate_generated(
     return issues
 
 
-# ── 7 条规则 ─────────────────────────────────────────────────
+# ── 8 条规则（2026-10-05 起；第 8 条是 E_SCHEMA_MISMATCH，见 _require_checkable）
 
 
 def _check_titles(level_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """`E_EMPTY_TITLE`（🔴 阻断）/ `W_TITLE_TOO_LONG`（🟡 提示）。
 
     ⚑ 标题**缺失**也算空标题：模型没给 title 时，用户看到的同样是"这一格是空的"，
-       报成同一个 code 才修得动。（§7.2 ① 里没有"字段缺失"这一类，见 _require_checkable）
+       报成同一个 code 才修得动。
+
+    ⚠️ **它和 `E_SCHEMA_MISMATCH` 不是一回事**（那个是 2026-10-05 加的，见
+       `_require_checkable`）：那个管的是**结构本身**坏了 ——
+       `nodes` 不是数组、`level` 不是整数，连树都组不出来；
+       而这里节点形状是对的、只是**内容空**。
 
     ⚑ **为什么超长是 🟡 而空标题是 🔴**（2026-09-22 降的级，原来两个都是 🔴）——
       两者坏的程度不一样：
@@ -268,15 +273,20 @@ def _where(i: int, node: dict[str, Any]) -> str:
 
 
 def _require_checkable(level_nodes: Any) -> None:
-    """这 7 条**需要** `level` 是整数才能跑。
+    """这 8 条**需要** `level` 是整数才能跑。
 
-    ⚠️ **缺字段 / 类型不对【没有对应的 code】** —— §7.2 ① 的 7 条里
-       没有"模型输出不合 schema"这一类。所以这里直接**报错**，
-       而不是发明一个文档里没有的 code。
+    ⚑ **2026-10-05（v0.7）**：缺字段 / 类型不对这一类现在有 code 了 ——
+       `E_SCHEMA_MISMATCH`（§7.2 ① 的第 1 行，🔴）。
 
-       ⚑ 这是一处已知缺口，而且**一定会被撞到**：DeepSeek 的 json 模式
-       只保证"是合法 json"，不保证符合 schema。真要撞到的时候，
-       加哪个 code 由你定（那是 v0.7 的事）。
+    ⚠️ **但它在这里仍然是【抛错】，没有变成 issue** —— 这是有意的：
+       这几种情况**都组不出树**（没有 `level` 就没法组装，见 §11 `outline.py`），
+       而**组不出树就没有 `outline` 可以挂 issue**。
+       所以 code 的作用是让失败**可分类**（从裸的 `ValueError`
+       变成已知的 `E_SCHEMA_MISMATCH`），而不是让它变成一条可上报的 issue。
+
+    ⚑ 加上这个 code 之前，这一处一直是"已知缺口"，
+       而且**一定会被撞到**：DeepSeek 的 json 模式只保证"是合法 json"，
+       不保证符合 schema。
     """
     if not isinstance(level_nodes, list):
         raise ValueError(f"模型返回的 nodes 不是数组，而是 {type(level_nodes).__name__}")

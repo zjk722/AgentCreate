@@ -1,6 +1,6 @@
 # 架构概览
 
-> **版本** v1.0 · **日期** 2026-09-12 · 对应 `DEV_DOC.md` v0.5
+> **版本** v1.0 · **日期** 2026-09-12（§4/§5 于 2026-10-05 校订）· 对应 `DEV_DOC.md` **v0.7**
 
 ---
 
@@ -186,6 +186,17 @@ UPDATE maps SET outline = ?, revision = revision + 1
 
 ## 4. 目录结构
 
+> ### ⚠️ 下面这棵树是【目标结构】，不是现状
+>
+> 它画的是 `DEV_DOC` §11 的**最终形态**。**里面大部分目录现在还不存在** ——
+> 比如 `java_backend/`（整个 A6 都还没开始）、`executor/`、`rag/`、`mcp/`、
+> `docker-compose.yml`，以及 `api/v1/` 下的 `execute_task.py` / `revise.py`。
+>
+> **想知道现在实际有什么，看树下面那张「现在实际存在什么」。**
+>
+> ⚑ 这个区分是 2026-10-05 补的：在这之前，这棵树顶着一个"目录结构"的标题，
+> 看起来就像"仓库里长这样"，**让人以为 A2–A6 已经做完了。**
+
 ```
 mindmap_agent/
 ├── DEV_DOC.md                  ← ⚑ 权威文档
@@ -205,8 +216,9 @@ mindmap_agent/
 │       ├── rag/                ← chunk.py / retrieve.py / trace.py
 │       ├── mcp/                ← server.py / client.py
 │       ├── domain/validation.py ← ⭐ 校验规则，产出 issues
-│       ├── workflows/          ← LangGraph: generate→check→repair
-│       └── evals/              ← corpus.json ⭐ / runner.py / judges.py
+│       └── workflows/          ← LangGraph: generate→check→repair
+│   └── evals/                  ← corpus.json ⭐ / runner.py
+│                                  ⚠️ 实际在 python_agent/evals/，【不在】app/ 下面
 │
 ├── java_backend/               ← ② Java · Host 层（A6）
 │   └── src/main/java/com/mindmap/
@@ -234,6 +246,39 @@ mindmap_agent/
             └── chat/           ← Agent 汇报 + 输入
 ```
 
+### 现在实际存在什么（2026-10-05 对着代码核过）
+
+```
+mindmap_agent/
+├── DEV_DOC.md / ARCHITECTURE.md / INTEGRATION.md / CHANGELOG.md / CLAUDE.md
+├── Makefile                       ← help / plan / prompt / test / eval / serve / restart / web
+├── shared/tools.json              ← 8 个工具（Java 与 Python 共读）
+│
+├── python_agent/                  ← A0 ✅ · A1 主体 ✅ · A2–A5 未开始
+│   ├── app/
+│   │   ├── api/v1/plan.py         ← ⚑ 【唯一】的接口：POST /v1/plan
+│   │   ├── cli.py                 ← make plan 走这里
+│   │   ├── domain/validation.py   ← §7.2 ① 生成期校验
+│   │   ├── llm/                   ← client.py / prompts.py ⭐
+│   │   ├── planner/               ← outline.py（level→树）/ deps.py（依赖解析）
+│   │   ├── tools/registry.py      ← 读 + 校验 tools.json（**不是**工具的【实现】）
+│   │   └── workflows/plan.py      ← plan_goal()
+│   ├── evals/                     ← A1：corpus.json（12 条）/ runner.py
+│   ├── tests/                     ← 6 个文件 / 69 passed
+│   └── devserve.py                ← make serve / restart
+│
+└── frontend/                      ← A7 的 demo（46 源文件 / 343 passed）
+    └── src/{types,lib,mocks,features}   ← ⚠️ 数据全来自 mocks，**没接后端**
+
+❌ 还没有：java_backend/ · docker-compose.yml · executor/ · rag/ · mcp/
+           frontend/src/api/ · .github/workflows/
+```
+
+> ⚑ **这张才是现状，上面那棵是目标。** 两者的差 ≈ A2–A6 的全部工作量。
+>
+> ⚠️ 两张树的**日期都要自己核** —— 本文的现状部分历史上就旧过（`CLAUDE.md` 为此专门
+> 加了一段警告）。**冲突时以仓库里的代码为准。**
+
 ### 前端 `lib/` 的分工（都是纯函数，可单测）
 
 | 文件 | 职责 | 上游 |
@@ -251,16 +296,24 @@ mindmap_agent/
 
 ## 5. 当前进度
 
-| 层 | 对应阶段 | 状态 |
+> ⚠️ **这张表历史上旧过一次。** 2026-10-05 核的时候它还写着「Python 引擎 A0–A5 ❌ 未开始」，
+> 而那时 **A0 早就做完了、A1 也做了大半** —— 一张"当前进度"表写着半年前的进度，
+> 正是这个文件最不该犯的错。
+>
+> **进度一律以 `CHANGELOG.md` 和仓库里的代码为准**；下面这张只是索引，看之前先对日期。
+
+| 层 | 对应阶段 | 状态（2026-10-05 核过）|
 |---|---|---|
-| **文档** | —— | ✅ **v0.6**（每次修订的来历见文末「文档演进记录」）|
-| **前端 demo** | 属于 A7 | ✅ **可运行**（数据全 mock）|
-| **Python 引擎** | A0–A5 | ❌ 未开始 |
-| **Java Host** | A6 | ❌ 未开始 |
+| **文档** | —— | ✅ **DEV_DOC v0.7**（修订来历见文末「文档演进记录」）|
+| **Python 引擎** | **A0** | ✅ **做完** —— CLI + `POST /v1/plan` 都能跑真模型 |
+| | **A1** | 🟡 **主体做完** —— 12 条种子 + 4 个 judge + 跑批 + 基线。**还差三样**：CI 门禁、token 预算断言、`source_span` 断言（最后这条要等 A2）|
+| | A2–A5 | ❌ 未开始（`rag/` · `executor/` · `mcp/` 都不存在）|
+| **前端 demo** | 属于 A7 | ✅ **可运行** —— ⚠️ 但**数据全来自 `src/mocks/`，没接后端** |
+| **Java Host** | A6 | ❌ **未开始** —— `java_backend/` 这个目录**还不存在** |
 
 ### demo 里什么是真的、什么是假的
 
-| ✅ 真的 | ❌ 假的（等 A0/A6/A4）|
+| ✅ 真的 | ❌ 假的（等接线 / A4 / A6）|
 |---|---|
 | 数据契约（`types/outline.ts`）| 数据来源 —— mock，不是 A0 规划出来的 |
 | 扁平→树重建 + **§7.2 全部 ②③ 两组坏数据检测** | 编排与调度 —— 真在 Java |
@@ -277,7 +330,18 @@ mindmap_agent/
 > 单机演示下感觉不到差别，但真做起来这里是并发正确性的全部所在。
 
 > **提前做 demo 最大的收益**：接口形状已经被钉住了。
-> 将来 A0/A6 接上去，前端这一层**不需要重写**。
+>
+> ⚠️ 但**"不需要重写"这句话说得太满了** —— 逐层核过（`INTEGRATION.md` 第 6 节）：
+>
+> | 层 | 接后端时 |
+> |---|---|
+> | 渲染层 · 算法层（`lib/`）· 类型契约 | ✅ **一行不改** |
+> | `lib/simulation.ts` | ❌ **整个报废** —— 它模拟的正是 Java 的职责 |
+> | `src/mocks/` | ❌ **整个报废**（建议留作测试夹具）|
+> | `App.tsx` 的编排 | ⚠️ **要改** —— 改的是"从哪拿数据"，不是"怎么渲染" |
+>
+> ⚑ 准确的说法是：**接口形状被钉死了，所以不用改【怎么显示】，只需要改【从哪拿】。**
+> 这个区别很重要 —— 前一句听着像"什么都不用做"，**会让 A6 排期时低估工作量。**
 
 ---
 
@@ -351,7 +415,7 @@ Python 容器里**没有 `DATABASE_URL`，也没装任何数据库驱动**，想
 | **第一次接触** | 本文 §0 → §1 → §2 |
 | **要写代码** | 本文 §4 → §6，然后 `DEV_DOC.md` 的 §3 / §5 / §11 |
 | **要接后端 / 定接口** | **`INTEGRATION.md`** —— 前端每个交互对应哪个接口 |
-| **要改数据模型** | `DEV_DOC.md` §4（含 v0.3–v0.6 的字段演进）|
+| **要改数据模型** | `DEV_DOC.md` §4（含 v0.3–v0.7 的字段演进）|
 | **要动 Prompt** | `DEV_DOC.md` §7 / §8 —— **A1 评测必须先做完** |
 | **面试准备** | `DEV_DOC.md` §6（ADR）→ 附录 B |
 | **排查"为什么这么设计"** | `DEV_DOC.md` §6 ADR + §14.2 反模式 |
@@ -372,6 +436,7 @@ Python 容器里**没有 `DATABASE_URL`，也没装任何数据库驱动**，想
 | **DEV_DOC v0.4** | §4.2 补 `result_summary`（引擎产出却无处可存）+ `assignee_reason` 枚举（界面上要显示的原因存储层无处可放）|
 | **DEV_DOC v0.5** | §7.3 把 `E_MISSING_EVIDENCE` 限定为 `assignee=agent`（人勾的完成不该被误报）|
 | **DEV_DOC v0.6** | §7.2 第 ③ 组补"在哪跑"与危害说明（**整组此前从未实现**）；§14.2 新增反模式 #13「静默失败」；§5.3 新增「删除节点」并修正附录 A 的一处**悬空引用** |
+| **DEV_DOC v0.7** | **一次集中回写**：8 处缺口（`proposed_tool` 无处存 / `result_ref` 无表可指 / `blocked` 没出口 / 审批可绕过 / 幂等键静默失效 / `policy_denied` 无规则 / 无 schema code / §9.2 写错）+ 3 条已定决策（`waived_deps` / 证据链只管外部动作 / DeepSeek）+ `assignee` 判据 |
 | **ARCHITECTURE v1.0** | 本文 —— 从 DEV_DOC 各章节抽取的全景与导航 |
 
 **这些缺口都是"做 demo 时暴露出来的"** —— 写代码比读文档更容易发现矛盾。
