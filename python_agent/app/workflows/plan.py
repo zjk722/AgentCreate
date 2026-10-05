@@ -89,6 +89,7 @@ def plan_goal(goal: str, *, max_depth: int = 5, max_children: int = 9) -> PlanRe
           那处在 §13「用户自己写」的清单里，所以这里只标注、不动它。
     """
     tools = load_tools()
+
     messages = build_messages(goal, tools, max_depth, max_children)
     data, usage = call_json(messages)
 
